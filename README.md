@@ -198,4 +198,6 @@ Para testar localmente:
 Este projeto está licenciado conforme [LICENSE.md](LICENSE.md).  
 Contribua para ampliar o acesso livre ao conhecimento! ✌️👽
 
+---
+
 <sub>_Em caso de dúvidas, me contate no Telegram, @heyalley_ (⚈₋₍⚈).</sub>
