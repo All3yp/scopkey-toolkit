@@ -1,0 +1,36 @@
+{
+  "name": "scopkey-toolkit",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "setup:env": "node src/scripts/setup-env.mjs",
+    "setup": "npm install && npm run setup:env",
+    "postinstall": "playwright install chromium",
+    "login": "node src/scripts/login.mjs",
+    "collect": "node src/pipeline/collect-links.mjs",
+    "extract": "node src/pipeline/extract-keywords.mjs",
+    "collect-extract": "node src/pipeline/collect-extract.mjs",
+    "clean": "node src/pipeline/clean-keywords.mjs",
+    "rank": "node src/pipeline/rank-keywords.mjs",
+    "sortby": "node src/pipeline/sort-results.mjs",
+    "test": "node --test",
+    "test:coverage": "node --test --experimental-test-coverage",
+    "build": "tsc --noEmit --incremental",
+    "check": "npm run build && npm test",
+    "prepare": "husky"
+  },
+  "dependencies": {
+    "antigravity-sdk": "^1.7.0",
+    "detectlanguage": "^3.0.0",
+    "dotenv": "^17.2.1",
+    "google-translate-api-next": "^0.1.0",
+    "playwright": "^1.59.0"
+  },
+  "overrides": {
+    "axios": "^1.7.4"
+  },
+  "devDependencies": {
+    "husky": "^9.1.7"
+  }
+}

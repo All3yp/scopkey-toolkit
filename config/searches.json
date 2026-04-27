@@ -1,0 +1,15 @@
+[
+  {
+    "name": "nanosatelites",
+    "query": "(CubeSats) AND (nano-satellite)",
+    "yearFrom": 2010,
+    "yearTo": 2026,
+    "docTypes": [
+      "ar",
+      "cp"
+    ],
+    "sortBy": "relevance",
+    "sortDirection": "desc",
+    "maxResults": 200
+  }
+]
