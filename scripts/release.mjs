@@ -26,7 +26,7 @@ const version = JSON.parse(
 ).version;
 
 console.log(`🏷  Criando tag v${version}...`);
-run(`git add package.json package-lock.json`);
+run(`git add package.json`);
 run(`git commit -m "chore: release v${version}"`);
 run(`git tag v${version}`);
 
