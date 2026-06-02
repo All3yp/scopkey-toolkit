@@ -22,6 +22,7 @@ blob-report/
 # Project files
 data/
 artifacts/
+config/svs/
 
 .codex
 MEMORY.md
