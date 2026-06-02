@@ -1,0 +1,21 @@
+[
+  {
+    "id": "stp-paper-type",
+    "query": "(\"non-terrestrial network*\" OR NTN OR \"non terrestrial network*\")",
+    "categoryIds": [
+      "stp_paper_type"
+    ],
+    "exclusion": "",
+    "sourceTitle": "IEEE Communications Surveys and Tutorials",
+    "authors": [],
+    "affiliations": [],
+    "countries": [],
+    "conferences": [],
+    "publishers": [],
+    "language": "",
+    "yearFrom": 2019,
+    "yearTo": 2026,
+    "docTypes": ["ar", "re", "cp"],
+    "sortBy": "relevance"
+  }
+]
