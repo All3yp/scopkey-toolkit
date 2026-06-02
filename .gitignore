@@ -24,6 +24,10 @@ data/
 artifacts/
 config/svs/
 
+# Real config (keep examples in repo, real data local only)
+config/searches.json
+config/categories.json
+
 .codex
 MEMORY.md
 SESSIONS.md
