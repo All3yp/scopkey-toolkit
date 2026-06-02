@@ -2,9 +2,10 @@ import fs from "node:fs";
 import path from "node:path";
 import { chromium } from "playwright";
 import { PATHS, SETTINGS, translateIfNeeded } from "../shared/config.mjs";
-import { readJson, appendJsonl, readAllDoneIds, countFailures, findLatestLinks, sleep } from "../shared/utils.mjs";
+import { readJson, appendJsonl, readAllDoneIds, readAllDoneIdsFromAllSessions, countFailures, findLatestLinksFiles, sleep } from "../shared/utils.mjs";
 import { log } from "../shared/logger.mjs";
 import { extractFromDOM, extractFromText } from "../core/keyword-extract.mjs";
+import { extractAbstractFromDOM } from "../core/abstract-extract.mjs";
 import { acceptCookies, ensureSession, checkSession } from "../browser/session.mjs";
 
 const MAX_RETRIES = 2;
@@ -34,20 +35,22 @@ export async function extractKeywordsForArticle(page, url) {
   await acceptCookies(page);
 
   await page
-    .waitForSelector('[data-testid*="keyword" i], [class*="keyword" i], [id*="keyword" i]', { timeout: 5000 })
+    .waitForSelector('#document-details-author-keywords, #document-details-indexed-keywords, [data-testid*="keyword" i]', { timeout: 5000 })
     .catch(() => sleep(1000));
 
+  const abstract = await page.evaluate(extractAbstractFromDOM).catch(() => null);
+
   const domResult = await page.evaluate(extractFromDOM);
-  if (domResult?.keywords.length > 0) return { keywords: domResult.keywords, source: domResult.source };
+  if (domResult?.keywords.length > 0) return { keywords: domResult.keywords, source: domResult.source, groups: domResult.groups, abstract };
 
   const bodyText = await page.locator("body").innerText();
   const textKws = extractFromText(bodyText);
-  if (textKws.length > 0) return { keywords: textKws, source: "text-fallback" };
+  if (textKws.length > 0) return { keywords: textKws, source: "text-fallback", abstract };
 
   const hasKeywordSection = await page.evaluate(() =>
     !!document.querySelector('[data-testid*="keyword" i], [id*="keyword" i]')
   );
-  return { keywords: [], source: hasKeywordSection ? "empty-section" : "no-section" };
+  return { keywords: [], source: hasKeywordSection ? "empty-section" : "no-section", abstract };
 }
 
 async function translateKeywords(keywords) {
@@ -60,12 +63,14 @@ async function translateKeywords(keywords) {
   return translated;
 }
 
-async function saveArticleResult(item, translatedKeywords, originalKeywords, source) {
+async function saveArticleResult(item, translatedKeywords, originalKeywords, source, groups, abstract) {
   appendJsonl(PATHS.results, {
     id: item.id,
     title: item.title,
+    abstract: abstract ?? undefined,
     keywords: translatedKeywords,
     originalKeywords: originalKeywords.some((k, i) => k !== translatedKeywords[i]) ? originalKeywords : undefined,
+    groups: groups?.length ? groups : undefined,
     source,
     sourceLink: item.url,
   });
@@ -112,7 +117,7 @@ export async function runExtractor(page, items, { doneIds, concurrency = DEFAULT
   async function processItem(workerPage, item) {
     log.article(cursor, pending.length, item.title, item.url);
     try {
-      const { keywords, source } = await extractKeywordsForArticle(workerPage, item.url);
+      const { keywords, source, groups, abstract } = await extractKeywordsForArticle(workerPage, item.url);
       const translatedKeywords = await translateKeywords(keywords);
 
       if (translatedKeywords.length === 0) {
@@ -131,7 +136,7 @@ export async function runExtractor(page, items, { doneIds, concurrency = DEFAULT
         failCount++;
       } else {
         log.success(translatedKeywords);
-        await saveArticleResult(item, translatedKeywords, keywords, source);
+        await saveArticleResult(item, translatedKeywords, keywords, source, groups, abstract);
         done.add(String(item.id));
         successCount++;
       }
@@ -199,22 +204,26 @@ function deduplicateByField(items, field) {
 async function main() {
   const concurrency = parseConcurrencyArg();
 
-  const linksFile = findLatestLinks(PATHS.collectDir);
-  if (!linksFile) {
-    log.error(`Nenhum arquivo links-*.json encontrado em ${PATHS.collectDir}. Execute \`npm run collect\` primeiro.`);
+  // Load all links files across ALL collect sessions (parent dir)
+  const allCollectDir = path.join(PATHS.collectDir, "..");
+  const collectFiles = findLatestLinksFiles(allCollectDir, Infinity);
+
+  if (collectFiles.length === 0) {
+    log.error(`Nenhum arquivo links-*.json encontrado em ${allCollectDir}. Execute \`npm run collect\` primeiro.`);
     process.exit(1);
   }
 
-  log.info(`Lendo links de: ${linksFile}`);
-  const linksData = readJson(linksFile, []);
-  const allItems = deduplicateByField(linksData.flatMap(s => s.publications ?? []), "id");
+  log.info(`Lendo ${collectFiles.length} arquivo(s) de links de todas as sessões de coleta`);
+  const linksData = collectFiles.map(file => readJson(file, null)).filter(Boolean);
+  const allItems = deduplicateByField(linksData.flatMap(s => (Array.isArray(s) ? s : [s]).flatMap(r => r.publications ?? [])), "id");
 
   if (allItems.length === 0) {
     log.error("Nenhum artigo encontrado. Execute `npm run collect` primeiro.");
     process.exit(1);
   }
 
-  const doneIds = readAllDoneIds(PATHS.resultsDir, PATHS.noKeywordsDir);
+  const extractParentDir = path.join(PATHS.extractDir, "..");
+  const doneIds = readAllDoneIdsFromAllSessions(extractParentDir);
   const pendingCount = allItems.filter(item => !doneIds.has(String(item.id))).length;
   log.info(`Total: ${allItems.length}  |  Já processados: ${doneIds.size}  |  A processar: ${pendingCount}`);
 
@@ -226,6 +235,7 @@ async function main() {
     headless: SETTINGS.headless,
     slowMo: SETTINGS.slowMo,
     viewport: null,
+    executablePath: SETTINGS.executablePath,
     args: ["--no-sandbox", "--disable-setuid-sandbox", "--start-maximized"],
   });
 

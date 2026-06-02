@@ -1,6 +1,6 @@
 import { chromium } from "playwright";
 import { PATHS, SETTINGS, translateIfNeeded } from "../shared/config.mjs";
-import { writeJson, appendJsonl, readAllDoneIds, sleep } from "../shared/utils.mjs";
+import { appendJsonl, readAllDoneIds, sleep } from "../shared/utils.mjs";
 import { log } from "../shared/logger.mjs";
 import { fmt } from "../shared/formatter.mjs";
 import { ensureSession } from "../browser/session.mjs";
@@ -66,6 +66,7 @@ async function main() {
 
   const context = await chromium.launchPersistentContext(PATHS.userDataDir, {
     headless: SETTINGS.headless, slowMo: SETTINGS.slowMo, viewport: null,
+    executablePath: SETTINGS.executablePath,
     args: ["--no-sandbox", "--disable-setuid-sandbox", "--start-maximized"],
   });
 
@@ -87,8 +88,7 @@ async function main() {
     ]);
 
     if (collectResults.length > 0) {
-      writeJson(PATHS.links, collectResults);
-      fmt.finalSummary(collectResults, PATHS.links);
+      fmt.finalSummary(collectResults, PATHS.collectDir);
     }
 
     log.header("Extraction Complete");

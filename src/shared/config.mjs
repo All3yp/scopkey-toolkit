@@ -2,6 +2,7 @@ import path from "node:path";
 import "dotenv/config";
 import { fileURLToPath } from "node:url";
 import { execSync } from "node:child_process";
+import fs from "node:fs";
 import DetectLanguage from "detectlanguage";
 import googleTranslate from 'google-translate-api-next';
 
@@ -51,10 +52,67 @@ function getTranslate(translateModule = googleTranslate) {
   return translate;
 }
 
+export function resolveChromiumExecutablePath(
+  env,
+  { platform = process.platform, exec = execSync, exists = fs.existsSync } = {}
+) {
+  const explicit = String(env.CHROMIUM_EXECUTABLE_PATH || "").trim();
+  if (explicit) return explicit;
+
+  const commonPaths = platform === "darwin"
+    ? [
+        "/Applications/Chromium.app/Contents/MacOS/Chromium",
+        "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+        "/Applications/Google Chrome Canary.app/Contents/MacOS/Google Chrome Canary",
+      ]
+    : platform === "win32"
+      ? [
+          "C:\\Program Files\\Chromium\\Application\\chrome.exe",
+          "C:\\Program Files (x86)\\Chromium\\Application\\chrome.exe",
+          "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
+          "C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe",
+        ]
+    : [
+          "/usr/bin/chromium",
+          "/usr/bin/chromium-browser",
+          "/snap/bin/chromium",
+          "/usr/bin/google-chrome",
+          "/usr/bin/google-chrome-stable",
+          "/usr/bin/chrome",
+          "/opt/google/chrome/chrome",
+        ];
+
+  for (const candidate of commonPaths) {
+    if (candidate.includes("\\")) {
+      if (exists(candidate)) return candidate;
+      continue;
+    }
+    if (exists(candidate)) return candidate;
+  }
+
+  const probes = platform === "win32"
+    ? ["chromium", "chrome", "chrome.exe"]
+    : ["chromium", "chromium-browser", "google-chrome", "google-chrome-stable", "chrome"];
+
+  for (const probe of probes) {
+    try {
+      const found = String(exec(platform === "win32" ? `where ${probe}` : `command -v ${probe}`, {
+        stdio: ["ignore", "pipe", "ignore"],
+      })).trim().split(/\r?\n/).find(Boolean);
+      if (found && exists(found)) return found;
+    } catch {
+      // Try the next candidate.
+    }
+  }
+
+  return undefined;
+}
+
 export function buildRuntimeConfig({
   env = process.env,
   platform = process.platform,
   exec = execSync,
+  exists = fs.existsSync,
   warn = console.warn,
   DetectLanguageCtor = DetectLanguage,
   translateModule = googleTranslate,
@@ -93,7 +151,7 @@ export function buildRuntimeConfig({
 
   const SETTINGS = {
     headless: false,
-    executablePath: env.CHROMIUM_EXECUTABLE_PATH || undefined,
+    executablePath: resolveChromiumExecutablePath(env, { platform, exec, exists }),
     slowMo: Number(env.SLOW_MO || 50),
     navigationTimeoutMs: 120000,
     delayBetweenArticlesMs: Number(env.DELAY_MS || 800),
@@ -129,15 +187,42 @@ export const translateIfNeeded = runtime.translateIfNeeded;
 
 const ARTIFACTS_DIR = path.join(ROOT, "artifacts");
 const OUTPUT_DIR = path.join(ARTIFACTS_DIR, "output");
-const COLLECT_DIR = path.join(OUTPUT_DIR, "collect");
-const EXTRACT_DIR = path.join(OUTPUT_DIR, "extract");
-const RESULTS_DIR = path.join(EXTRACT_DIR, "results");
-const FAILURES_DIR = path.join(EXTRACT_DIR, "failures");
-const NO_KW_DIR = path.join(EXTRACT_DIR, "no-keywords");
-const CLEAN_DIR = path.join(EXTRACT_DIR, "clean");
-const SORTED_DIR = path.join(OUTPUT_DIR, "sorted");
 const BROWSER_DIR = path.join(ARTIFACTS_DIR, "browser");
 const SESSION_DIR = path.join(ARTIFACTS_DIR, "session");
+const SORTED_DIR = path.join(OUTPUT_DIR, "sorted");
+
+function buildSessionPaths(sessionTs) {
+  const COLLECT_DIR = path.join(OUTPUT_DIR, "collect", sessionTs);
+  const EXTRACT_DIR = path.join(OUTPUT_DIR, "extract", sessionTs);
+  const RESULTS_DIR = path.join(EXTRACT_DIR, "results");
+  const FAILURES_DIR = path.join(EXTRACT_DIR, "failures");
+  const NO_KW_DIR = path.join(EXTRACT_DIR, "no-keywords");
+  const CLEAN_DIR = path.join(EXTRACT_DIR, "clean");
+  const DOWNLOADS_DIR = path.join(EXTRACT_DIR, "downloads");
+  const ABSTRACTS_DIR = path.join(EXTRACT_DIR, "abstracts");
+
+  return {
+    collectDir: COLLECT_DIR,
+    extractDir: EXTRACT_DIR,
+    resultsDir: RESULTS_DIR,
+    failuresDir: FAILURES_DIR,
+    noKeywordsDir: NO_KW_DIR,
+    cleanDir: CLEAN_DIR,
+    downloadsDir: DOWNLOADS_DIR,
+    abstractsDir: ABSTRACTS_DIR,
+    abstracts: path.join(ABSTRACTS_DIR, `abstracts-${sessionTs}.jsonl`),
+    links: path.join(COLLECT_DIR, `links-${sessionTs}.json`),
+    results: path.join(RESULTS_DIR, `results-${sessionTs}.jsonl`),
+    noKeywords: path.join(NO_KW_DIR, `no-keywords-${sessionTs}.jsonl`),
+    failures: path.join(FAILURES_DIR, `failures-${sessionTs}.jsonl`),
+    downloads: path.join(DOWNLOADS_DIR, `downloads-${sessionTs}.jsonl`),
+  };
+}
+
+const _d = new Date();
+const _pad = n => String(n).padStart(2, "0");
+const SESSION_TS = process.env.SESSION_TS ||
+  `${_d.getFullYear()}-${_pad(_d.getMonth() + 1)}-${_pad(_d.getDate())}_${_pad(_d.getHours())}h${_pad(_d.getMinutes())}m${_pad(_d.getSeconds())}s`;
 
 export const PATHS = {
   root: ROOT,
@@ -146,18 +231,10 @@ export const PATHS = {
   authCookies: path.join(SESSION_DIR, "auth-cookies.json"),
   searches: path.join(ROOT, "config", "searches.json"),
   outputDir: OUTPUT_DIR,
-  collectDir: COLLECT_DIR,
-  extractDir: EXTRACT_DIR,
-  resultsDir: RESULTS_DIR,
-  failuresDir: FAILURES_DIR,
-  noKeywordsDir: NO_KW_DIR,
-  cleanDir: CLEAN_DIR,
   sortedDir: SORTED_DIR,
-  links: timestampedPath(COLLECT_DIR, "links", "json"),
-  results: timestampedPath(RESULTS_DIR, "results", "jsonl"),
-  noKeywords: timestampedPath(NO_KW_DIR, "no-keywords", "jsonl"),
-  failures: timestampedPath(FAILURES_DIR, "failures", "jsonl"),
   rawDir: path.join(OUTPUT_DIR, "raw"),
+  sessionTs: SESSION_TS,
+  ...buildSessionPaths(SESSION_TS),
 };
 
 export const SETTINGS = runtime.SETTINGS;

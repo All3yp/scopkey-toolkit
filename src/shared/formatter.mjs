@@ -80,7 +80,7 @@ export const fmt = {
     let totalArticles = 0;
     for (const r of results) {
       const status = r.count > 0 ? c.green : c.yellow;
-      console.log(`  ${status}•${c.reset} ${c.bold}${r.name}${c.reset}: ${c.cyan}${r.count}${c.reset} ${c.dim}artigos${c.reset}`);
+      console.log(`  ${status}•${c.reset} ${c.bold}${r.id}${c.reset}: ${c.cyan}${r.count}${c.reset}${r.total ? ` / ${r.total}` : ""} ${c.dim}artigos${c.reset}`);
       totalArticles += r.count;
     }
 

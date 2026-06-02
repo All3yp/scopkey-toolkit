@@ -12,49 +12,100 @@ export function extractFromDOM() {
       .filter(t => { if (seen.has(t)) return false; seen.add(t); return true; });
   }
 
-  const testidSection = document.querySelector('[data-testid*="keyword" i], [data-testid*="Keyword"]');
-  if (testidSection) {
-    const kws = textsOf(testidSection.querySelectorAll("a, button, span[class], li"));
-    if (kws.length > 0) return { source: "testid", keywords: deduped(kws) };
+  function labelToType(label) {
+    const l = label.toLowerCase();
+    if (/author\s*keyword/.test(l)) return "author";
+    if (/engineering\s*controlled/.test(l)) return "indexed-controlled";
+    if (/engineering\s*uncontrolled/.test(l)) return "indexed-uncontrolled";
+    if (/indexed/.test(l)) return "indexed";
+    return "other";
   }
 
-  const headingWalker = document.createTreeWalker(
-    document.body,
-    NodeFilter.SHOW_ELEMENT,
-    {
-      acceptNode(node) {
-        const t = node.textContent.trim().toLowerCase();
-        return t === "author keywords" || t === "author keyword"
-          ? NodeFilter.FILTER_ACCEPT
-          : NodeFilter.FILTER_SKIP;
+  // Strategy 1: exact Scopus IDs — structure: dl > dt(label) + dd(span with "kw1; kw2")
+  const groups = [];
+
+  const authorEl = document.getElementById("document-details-author-keywords");
+  if (authorEl) {
+    const kws = deduped(textsOf(authorEl.querySelectorAll("a, button, span[class], li")));
+    if (kws.length) groups.push({ type: "author", keywords: kws });
+  }
+
+  const indexedEl = document.getElementById("document-details-indexed-keywords");
+  if (indexedEl) {
+    for (const dl of indexedEl.querySelectorAll("dl")) {
+      const label = dl.querySelector("dt")?.textContent?.trim() ?? "";
+      const type = labelToType(label) !== "other" ? labelToType(label) : "indexed";
+      const kws = deduped(textsOf(dl.querySelectorAll("dd span, dd a, dd li")));
+      if (kws.length) groups.push({ type, keywords: kws });
+    }
+    // Fallback if no dl found
+    if (!groups.some(g => g.type !== "author")) {
+      const kws = deduped(textsOf(indexedEl.querySelectorAll("a, span[class], li")));
+      if (kws.length) groups.push({ type: "indexed", keywords: kws });
+    }
+  }
+
+  if (groups.length > 0) {
+    const allKws = [...new Set(groups.flatMap(g => g.keywords))];
+    return { source: "id-exact", keywords: allKws, groups };
+  }
+
+  // Strategy 2: testid fallback — collect ALL keyword sections
+  const testidSections = [...document.querySelectorAll('[data-testid*="keyword" i]')];
+  if (testidSections.length > 0) {
+    const tGroups = [];
+    for (const section of testidSections) {
+      const labelEl = section.querySelector('h2, h3, h4, h5, [class*="label" i], [class*="title" i], [class*="heading" i]')
+        ?? section.previousElementSibling;
+      const label = labelEl?.textContent?.trim() ?? "";
+      const type = labelToType(label);
+      const kws = deduped(textsOf(section.querySelectorAll("a, button, span[class], li")));
+      if (kws.length > 0) tGroups.push({ type, keywords: kws });
+    }
+    if (tGroups.length > 0) {
+      const allKws = [...new Set(tGroups.flatMap(g => g.keywords))];
+      return { source: "testid", keywords: allKws, groups: tGroups };
+    }
+  }
+
+  // Strategy 3: heading-based walker
+  const allGroups = [];
+  const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_ELEMENT, {
+    acceptNode(node) {
+      const t = node.textContent.trim();
+      return /^(author\s*keywords?|indexed\s*keywords?|engineering\s*(controlled|uncontrolled)\s*(terms?)?)/i.test(t)
+        ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_SKIP;
+    }
+  });
+
+  let heading;
+  while ((heading = walker.nextNode())) {
+    const label = heading.textContent.trim();
+    const type = labelToType(label);
+    const isLabel = t => new RegExp(`^${label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, "i").test(t);
+    const parent = heading.parentElement;
+    let kws = [];
+    if (parent) kws = deduped(textsOf(parent.querySelectorAll("a, span, li")).filter(t => !isLabel(t)));
+    if (!kws.length) {
+      let sib = heading.nextElementSibling;
+      for (let i = 0; i < 5 && sib; i++) {
+        kws = deduped(textsOf(sib.querySelectorAll("a, span, button, li")));
+        if (kws.length) break;
+        sib = sib.nextElementSibling;
       }
     }
-  );
-
-  const heading = headingWalker.nextNode();
-  if (heading) {
-    const isHeadingLabel = t => /^author\s*keywords?$/i.test(t);
-    const parent = heading.parentElement;
-
-    if (parent) {
-      const links = textsOf(parent.querySelectorAll("a")).filter(t => !isHeadingLabel(t));
-      if (links.length > 0) return { source: "heading-parent", keywords: deduped(links) };
+    if (!kws.length && parent?.parentElement) {
+      kws = deduped(textsOf(parent.parentElement.querySelectorAll("a")).filter(t => !isLabel(t)));
     }
-
-    let sibling = heading.nextElementSibling;
-    for (let i = 0; i < 5 && sibling; i++) {
-      const links = textsOf(sibling.querySelectorAll("a, span, button"));
-      if (links.length > 0) return { source: "heading-sibling", keywords: deduped(links) };
-      sibling = sibling.nextElementSibling;
-    }
-
-    const grandparent = heading.parentElement?.parentElement;
-    if (grandparent) {
-      const links = textsOf(grandparent.querySelectorAll("a")).filter(t => !isHeadingLabel(t));
-      if (links.length > 0) return { source: "heading-grandparent", keywords: deduped(links) };
-    }
+    if (kws.length) allGroups.push({ type, keywords: kws });
   }
 
+  if (allGroups.length > 0) {
+    const allKws = [...new Set(allGroups.flatMap(g => g.keywords))];
+    return { source: "heading", keywords: allKws, groups: allGroups };
+  }
+
+  // Strategy 3: class-based selectors
   const CLASS_SELECTORS = [
     "[class*='authorKeyword' i]",
     "[class*='keyword-group' i]",
@@ -65,15 +116,15 @@ export function extractFromDOM() {
   for (const sel of CLASS_SELECTORS) {
     const container = document.querySelector(sel);
     if (container) {
-      const kws = textsOf(container.querySelectorAll("a, span, button, li"));
-      if (kws.length > 0) return { source: `class:${sel}`, keywords: deduped(kws) };
+      const kws = deduped(textsOf(container.querySelectorAll("a, span, button, li")));
+      if (kws.length > 0) return { source: `class:${sel}`, keywords: kws };
     }
   }
 
   const idSection = document.querySelector("[id*='keyword' i]");
   if (idSection) {
-    const kws = textsOf(idSection.querySelectorAll("a, span, li"));
-    if (kws.length > 0) return { source: "id", keywords: deduped(kws) };
+    const kws = deduped(textsOf(idSection.querySelectorAll("a, span, li")));
+    if (kws.length > 0) return { source: "id", keywords: kws };
   }
 
   return null;

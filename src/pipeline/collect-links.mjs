@@ -1,19 +1,17 @@
 import { chromium } from "playwright";
 import { PATHS, SETTINGS } from "../shared/config.mjs";
-import { readJson, writeJson, sleep, findLatestLinks } from "../shared/utils.mjs";
+import path from "node:path";
+import { readJson, writeJson, readAllDoneIds, sleep, findLatestLinksFiles } from "../shared/utils.mjs";
 import { buildScopusUrl, resolveScopusSort } from "../core/build-url.mjs";
 import { log } from "../shared/logger.mjs";
 import { fmt } from "../shared/formatter.mjs";
-import { acceptCookies, ensureSession } from "../browser/session.mjs";
+import { acceptCookies, ensureSession, checkSession, isOnScopus } from "../browser/session.mjs";
 
 async function waitForResults(page) {
-  await page.waitForSelector('a[href*="/pages/publications/"]', { timeout: 10000 }).catch(async () => {
-    await ensureSession(page);
-    await page.goto(SETTINGS.cafeAccessUrl, {
-      waitUntil: "load",
-      timeout: SETTINGS.navigationTimeoutMs
-    });
-  });
+  await page.waitForSelector(
+    'a[href*="/pages/publications/"], a[href*="record/display"], a[href*="/record/"]',
+    { timeout: 10000 }
+  ).catch(() => {});
   await sleep(800);
 }
 
@@ -62,7 +60,22 @@ async function extractPubsFromPage(page) {
       return null;
     }
 
-    return [...root.querySelectorAll('a[href*="/pages/publications/"]')]
+    const allLinks = [...document.querySelectorAll("a[href]")]
+      .map(a => a.href)
+      .filter(h => h && !h.startsWith("javascript") && h.length > 10);
+    const _sample = allLinks.slice(0, 20);
+
+    const pubLinks = [
+      ...root.querySelectorAll(
+        'a[href*="/pages/publications/"], a[href*="record/display"], a[href*="/record/display.uri"]'
+      )
+    ];
+
+    if (pubLinks.length === 0) {
+      return { __debug__: _sample };
+    }
+
+    return pubLinks
       .map(a => {
         const m = a.href.match(/\/pages\/publications\/(\d+)/);
         if (!m || !a.innerText.trim()) return null;
@@ -91,17 +104,17 @@ async function setDisplayPerPage(page, maxResults) {
   } catch { return null; }
 }
 
-function addUniquePublications(target, incoming, seenIds, maxResults) {
-  let added = 0;
+function addUniquePublications(target, incoming, seenIds, maxResults, excludeIds = new Set()) {
+  const addedPubs = [];
   for (const pub of incoming) {
     const id = String(pub.id || "");
-    if (!id || seenIds.has(id)) continue;
+    if (!id || seenIds.has(id) || excludeIds.has(id)) continue;
     seenIds.add(id);
     target.push(pub);
-    added++;
+    addedPubs.push(pub);
     if (target.length >= maxResults) break;
   }
-  return added;
+  return addedPubs;
 }
 
 async function goToNextResultsPage(page) {
@@ -183,12 +196,26 @@ async function extractNumberOfPages(page) {
 }
 
 function queryKey(s) {
-  return [(s.query || "").trim().toLowerCase(), s.yearFrom || "", s.yearTo || "", (s.docTypes || []).sort().join(",")].join("|");
+  return [
+    (s.query || "").trim().toLowerCase(),
+    s.yearFrom || "",
+    s.yearTo || "",
+    (s.docTypes || []).sort().join(","),
+    (s.categoryIds || []).sort().join(","),
+    (s.sourceTitle || "").trim().toLowerCase(),
+    (s.authors || []).sort().join(","),
+    (s.affiliations || []).sort().join(","),
+    (s.countries || []).sort().join(","),
+    (s.conferences || []).sort().join(","),
+    (s.publishers || []).sort().join(","),
+    (s.language || "").trim().toLowerCase()
+  ].join("|");
 }
 
-export async function runCollector(page, { onBatch, existingResults = [], outputFile } = {}) {
+export async function runCollector(page, { onBatch, existingResults = [], excludeIds } = {}) {
   const searches = readJson(PATHS.searches, []);
   if (!searches.length) throw new Error("Arquivo data/input/searches.json não encontrado ou vazio.");
+  const knownIds = excludeIds ?? readAllDoneIds(PATHS.resultsDir, PATHS.noKeywordsDir);
 
   const groups = new Map();
   for (const s of searches) {
@@ -197,46 +224,53 @@ export async function runCollector(page, { onBatch, existingResults = [], output
     groups.get(key).push(s);
   }
 
-  const doneNames = new Set(existingResults.map(r => r.name));
+  const doneIds = new Set(existingResults.map(r => r.id));
   const results = [...existingResults];
 
   for (const [, group] of groups) {
-    const pending = group.filter(s => !doneNames.has(s.name));
+    const pending = group.filter(s => !doneIds.has(s.id));
     if (!pending.length) { log.info(`⏩ Query "${group[0].query}" já coletada — pulando`); continue; }
 
-    const maxOfGroup = Math.max(...group.map(s => s.maxResults ?? 100));
     const primary = group[0];
-    const searchUrl = primary.url ?? buildScopusUrl({ ...primary, sortBy: "relevance" });
+    const searchUrl = primary.url ?? buildScopusUrl(primary);
 
     if (group.length > 1) log.info(`Query "${primary.query}" aparece em ${group.length} buscas — coletando uma vez`);
-    fmt.searchStart(primary.name, maxOfGroup, searchUrl);
+    fmt.searchStart(primary.id, "?", searchUrl);
 
     await page.goto(searchUrl, { waitUntil: "domcontentloaded", timeout: SETTINGS.navigationTimeoutMs });
     await sleep(3000);
     await acceptCookies(page);
 
-    const perPage = await setDisplayPerPage(page, maxOfGroup);
+    const currentUrl = page.url();
+    if (!isOnScopus(currentUrl) || currentUrl.includes("signIn") || currentUrl.includes("signin") || currentUrl.includes("login")) {
+      log.warn("Sessão perdida após navegação — re-autenticando...");
+      await ensureSession(page);
+      await page.goto(searchUrl, { waitUntil: "domcontentloaded", timeout: SETTINGS.navigationTimeoutMs });
+      await sleep(3000);
+    }
+
+    const perPage = await setDisplayPerPage(page, 200);
     perPage ? fmt.displayAdjusted(perPage) : fmt.displayWarning();
 
     const totalDocs = await extractTotalDocuments(page);
-    const effectiveMax = totalDocs && totalDocs > maxOfGroup ? totalDocs : maxOfGroup;
-    if (totalDocs) log.info(`Scopus found ${totalDocs} documents${totalDocs > maxOfGroup ? ` (maxResults=${maxOfGroup} → collecting all ${totalDocs})` : ""}`);
+    if (totalDocs) log.info(`Scopus encontrou ${totalDocs} documentos`);
 
     const collected = [];
     const seenIds = new Set();
     let pageNumber = 1;
 
-    while (collected.length < effectiveMax) {
-      const pubs = await extractPubsFromPage(page);
-      const added = addUniquePublications(collected, pubs, seenIds, effectiveMax);
-      fmt.pageProgress(pageNumber, pubs.length, added, collected.length, effectiveMax);
-
-      if (onBatch && added > 0) {
-        const newPubs = pubs.filter(p => seenIds.has(String(p.id)));
-        if (newPubs.length > 0) onBatch(newPubs);
+    while (true) {
+      const raw = await extractPubsFromPage(page);
+      if (raw?.__debug__) {
+        log.warn("Seletor de artigos não encontrou resultados. Sample de links na página:");
+        for (const href of raw.__debug__) log.info("  " + href);
+        break;
       }
+      const pubs = Array.isArray(raw) ? raw : [];
+      const addedPubs = addUniquePublications(collected, pubs, seenIds, Infinity, knownIds);
+      fmt.pageProgress(pageNumber, pubs.length, addedPubs.length, collected.length, totalDocs ?? "?");
 
-      if (collected.length >= effectiveMax) break;
+      if (onBatch && addedPubs.length > 0) onBatch(addedPubs);
       if (!await goToNextResultsPage(page)) { fmt.paginationDone(); break; }
       pageNumber++;
       await sleep(1500);
@@ -244,22 +278,27 @@ export async function runCollector(page, { onBatch, existingResults = [], output
 
     const numberOfPages = await extractNumberOfPages(page);
     for (const s of group) {
-      if (doneNames.has(s.name)) continue;
-      const max = s.maxResults ?? 100;
-      fmt.searchSummary(Math.min(collected.length, max), numberOfPages, max);
-      results.push({
-        name: s.name,
-        url: s.url ?? buildScopusUrl(s),
+      if (doneIds.has(s.id)) continue;
+      const displayTotal = totalDocs ?? collected.length;
+      fmt.searchSummary(collected.length, numberOfPages, displayTotal);
+      const builtUrl = s.url ?? buildScopusUrl(s);
+      const entry = {
+        id: s.id,
+        query: s.query,
+        exclusion: s.exclusion,
+        url: builtUrl,
         sort: resolveScopusSort(s),
-        count: Math.min(collected.length, max),
+        count: collected.length,
+        total: displayTotal,
         metadata: { numberOfPages },
-        publications: collected.slice(0, max),
-      });
-    }
+        publications: collected,
+      };
+      results.push(entry);
+      doneIds.add(s.id);
 
-    if (outputFile) {
-      writeJson(outputFile, results);
-      log.step(`Progresso salvo (${results.length} buscas) → ${outputFile}`);
+      const searchFile = path.join(PATHS.collectDir, `links-${s.id}-${PATHS.sessionTs}.json`);
+      writeJson(searchFile, entry);
+      log.step(`Salvo → ${searchFile}`);
     }
   }
 
@@ -267,14 +306,18 @@ export async function runCollector(page, { onBatch, existingResults = [], output
 }
 
 async function main() {
-  const existingFile = findLatestLinks(PATHS.collectDir);
-  const existingResults = existingFile ? readJson(existingFile, []) : [];
+  const existingFiles = findLatestLinksFiles(PATHS.collectDir, Infinity);
+  const existingResults = existingFiles.flatMap(f => {
+    const data = readJson(f, null);
+    return data ? [data] : [];
+  });
   if (existingResults.length > 0) {
-    log.info(`Resumindo — ${existingResults.length} buscas já coletadas: ${existingResults.map(r => r.name).join(", ")}`);
+    log.info(`Resumindo — ${existingResults.length} buscas já coletadas: ${existingResults.map(r => r.id).join(", ")}`);
   }
 
   const context = await chromium.launchPersistentContext(PATHS.userDataDir, {
     headless: SETTINGS.headless, slowMo: SETTINGS.slowMo, viewport: null,
+    executablePath: SETTINGS.executablePath,
     args: ["--no-sandbox", "--disable-setuid-sandbox", "--start-maximized"],
   });
 
@@ -282,9 +325,8 @@ async function main() {
     const page = await context.newPage();
     await ensureSession(page);
     await sleep(3000);
-    const results = await runCollector(page, { existingResults, outputFile: PATHS.links });
-    writeJson(PATHS.links, results);
-    fmt.finalSummary(results, PATHS.links);
+    const results = await runCollector(page, { existingResults });
+    fmt.finalSummary(results, PATHS.collectDir);
   } finally {
     await context.close();
   }

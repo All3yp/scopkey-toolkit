@@ -1,0 +1,97 @@
+[
+{
+    "id": "ntn-uav",
+    "query": "(\"non-terrestrial network*\" OR NTN OR \"non terrestrial network*\")",
+    "categoryIds": [
+      "plat_uav"
+    ],
+    "exclusion": "",
+    "sourceTitle": "IEEE Communications Surveys and Tutorials",
+    "authors": [],
+    "affiliations": [],
+    "countries": [],
+    "conferences": [],
+    "publishers": [],
+    "language": "",
+    "yearFrom": 2019,
+    "yearTo": 2026,
+    "docTypes": ["ar", "re", "cp"],
+    "sortBy": "relevance"
+  },
+  {
+    "id": "ntn-haps",
+    "query": "(\"non-terrestrial network*\" OR NTN OR \"non terrestrial network*\")",
+    "categoryIds": [
+      "plat_haps"
+    ],
+    "exclusion": "",
+    "sourceTitle": "IEEE Communications Surveys and Tutorials",
+    "authors": [],
+    "affiliations": [],
+    "countries": [],
+    "conferences": [],
+    "publishers": [],
+    "language": "",
+    "yearFrom": 2019,
+    "yearTo": 2026,
+    "docTypes": ["ar", "re", "cp"],
+    "sortBy": "relevance"
+  },
+  {
+    "id": "ntn-leo",
+    "query": "(\"non-terrestrial network*\" OR NTN OR \"non terrestrial network*\")",
+    "categoryIds": [
+      "plat_leo"
+    ],
+    "exclusion": "",
+    "sourceTitle": "IEEE Communications Surveys and Tutorials",
+    "authors": [],
+    "affiliations": [],
+    "countries": [],
+    "conferences": [],
+    "publishers": [],
+    "language": "",
+    "yearFrom": 2019,
+    "yearTo": 2026,
+    "docTypes": ["ar", "re", "cp"],
+    "sortBy": "relevance"
+  },
+  {
+    "id": "ntn-meo",
+    "query": "(\"non-terrestrial network*\" OR NTN OR \"non terrestrial network*\")",
+    "categoryIds": [
+      "plat_meo"
+    ],
+    "exclusion": "",
+    "sourceTitle": "IEEE Communications Surveys and Tutorials",
+    "authors": [],
+    "affiliations": [],
+    "countries": [],
+    "conferences": [],
+    "publishers": [],
+    "language": "",
+    "yearFrom": 2019,
+    "yearTo": 2026,
+    "docTypes": ["ar", "re", "cp"],
+    "sortBy": "relevance"
+  },
+  {
+    "id": "ntn-geo",
+    "query": "(\"non-terrestrial network*\" OR NTN OR \"non terrestrial network*\")",
+    "categoryIds": [
+      "plat_geo"
+    ],
+    "exclusion": "",
+    "sourceTitle": "IEEE Communications Surveys and Tutorials",
+    "authors": [],
+    "affiliations": [],
+    "countries": [],
+    "conferences": [],
+    "publishers": [],
+    "language": "",
+    "yearFrom": 2019,
+    "yearTo": 2026,
+    "docTypes": ["ar", "re", "cp"],
+    "sortBy": "relevance"
+  }
+]

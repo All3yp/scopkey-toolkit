@@ -47,16 +47,31 @@ export function readJsonlIds(file) {
 }
 
 
-export function findLatestLinks(outputDir) {
-  let files = [];
+function collectLinksRecursive(dir) {
+  const found = [];
   try {
-    files = fs.readdirSync(outputDir).filter(f => /^links-.*\.json$/.test(f));
-  } catch {
-    return null;
-  }
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        found.push(...collectLinksRecursive(full));
+      } else if (/^links-.*\.json$/.test(entry.name)) {
+        found.push(full);
+      }
+    }
+  } catch { }
+  return found;
+}
+
+export function findLatestLinks(outputDir) {
+  const files = collectLinksRecursive(outputDir);
   if (!files.length) return null;
   files.sort().reverse();
-  return path.join(outputDir, files[0]);
+  return files[0];
+}
+
+export function findLatestLinksFiles(outputDir, limit = 1) {
+  const files = collectLinksRecursive(outputDir);
+  return files.sort().reverse().slice(0, Math.max(1, Number(limit) || 1));
 }
 
 function listJsonl(dir) {
@@ -84,6 +99,20 @@ function readIdsFromJsonl(files, filter) {
       }
     } catch {  }
   }
+  return ids;
+}
+
+export function readAllDoneIdsFromAllSessions(extractParentDir) {
+  const ids = new Set();
+  try {
+    for (const entry of fs.readdirSync(extractParentDir, { withFileTypes: true })) {
+      if (!entry.isDirectory()) continue;
+      const sessionDir = path.join(extractParentDir, entry.name);
+      const resultsDir = path.join(sessionDir, "results");
+      const noKwDir = path.join(sessionDir, "no-keywords");
+      for (const id of readAllDoneIds(resultsDir, noKwDir)) ids.add(id);
+    }
+  } catch { }
   return ids;
 }
 
@@ -117,4 +146,24 @@ export function countFailures(failuresDir) {
     } catch {  }
   }
   return counts;
+}
+
+export function loadAbstractsMap(abstractsDir) {
+  const abstracts = new Map();
+  for (const file of listJsonl(abstractsDir)) {
+    try {
+      const lines = fs.readFileSync(file, "utf8").split("\n");
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed) continue;
+        try {
+          const obj = JSON.parse(trimmed);
+          if (obj.id && obj.abstract) {
+            abstracts.set(String(obj.id), obj.abstract);
+          }
+        } catch {  }
+      }
+    } catch {  }
+  }
+  return abstracts;
 }

@@ -1,0 +1,71 @@
+{
+  "categories": [
+    {
+      "id": "plat_uav",
+      "name": "Platform: UAV / aerial node",
+      "keywords": [
+        "UAV",
+        "unmanned aerial vehicle",
+        "drone",
+        "aerial platform",
+        "aerial base station",
+        "UAV-assisted",
+        "UAV-enabled",
+        "UAV relay"
+      ]
+    },
+    {
+      "id": "plat_haps",
+      "name": "Platform: HAPS / high-altitude platform",
+      "keywords": [
+        "HAPS",
+        "high altitude platform",
+        "high-altitude platform",
+        "high altitude platform station",
+        "high altitude pseudo-satellite"
+      ]
+    },
+    {
+      "id": "plat_leo",
+      "name": "Platform: LEO satellites / constellations",
+      "keywords": [
+        "LEO",
+        "low earth orbit",
+        "low-earth orbit",
+        "LEO satellite",
+        "LEO constellation"
+      ]
+    },
+    {
+      "id": "plat_meo",
+      "name": "Platform: MEO satellites",
+      "keywords": [
+        "MEO",
+        "medium earth orbit",
+        "medium-earth orbit",
+        "MEO satellite",
+        "MEO constellation"
+      ]
+    },
+    {
+      "id": "plat_geo",
+      "name": "Platform: GEO satellites",
+      "keywords": [
+        "GEO",
+        "geostationary",
+        "geosynchronous",
+        "GEO satellite",
+        "geostationary satellite",
+        "high throughput satellite",
+        "HTS"
+      ]
+    },
+    {
+      "id": "stp_paper_type",
+      "name": "Papers like: Survey + Tutorial + Position",
+      "keywords": [
+        "tutorial", "survey", "position", "roadmap", "perspective", "future directions", "challenges and opportunities", "research directions", "open challenges", "challenges"
+      ]
+    }
+  ]
+}

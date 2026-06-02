@@ -80,8 +80,8 @@ test("buildScopusUrl: composes core query params and defaults", () => {
   assert.equal(u.origin + u.pathname, "https://scopus.example/results/results.uri");
   assert.equal(u.searchParams.get("st1"), "machine learning");
   assert.equal(u.searchParams.get("st2"), "");
-  assert.equal(u.searchParams.get("s"), "TITLE-ABS-KEY(machine learning)");
-  assert.equal(u.searchParams.get("limit"), "100");
+  assert.equal(u.searchParams.get("s"), "machine learning");
+  assert.equal(u.searchParams.get("limit"), "200");
   assert.equal(u.searchParams.get("origin"), "resultslist");
   assert.equal(u.searchParams.get("sort"), "cp-f");
   assert.equal(u.searchParams.get("src"), "s");
@@ -89,12 +89,8 @@ test("buildScopusUrl: composes core query params and defaults", () => {
   assert.equal(u.searchParams.get("sdt"), "cl");
 });
 
-test("buildScopusUrl: caps limit at 100", () => {
-  assert.equal(new URL(buildScopusUrl({ query: "q", limit: 999 })).searchParams.get("limit"), "100");
-});
-
-test("buildScopusUrl: preserves smaller limit values", () => {
-  assert.equal(new URL(buildScopusUrl({ query: "q", limit: 25 })).searchParams.get("limit"), "25");
+test("buildScopusUrl: limit is always 200 regardless of input", () => {
+  assert.equal(new URL(buildScopusUrl({ query: "q" })).searchParams.get("limit"), "200");
 });
 
 test("buildScopusUrl: includes year range when provided", () => {
@@ -109,9 +105,9 @@ test("buildScopusUrl: omits year params when not provided", () => {
   assert.equal(u.searchParams.has("yearTo"),   false);
 });
 
-test("buildScopusUrl: emits cluster param per docType (default = 'ar')", () => {
+test("buildScopusUrl: emits no cluster params when docTypes is empty (default)", () => {
   const clusters = new URL(buildScopusUrl({ query: "q" })).searchParams.getAll("cluster");
-  assert.deepEqual(clusters, ['scosubtype,"ar",t']);
+  assert.deepEqual(clusters, []);
 });
 
 test("buildScopusUrl: emits one cluster per docType, preserving order", () => {
@@ -149,4 +145,72 @@ test("buildScopusUrl: throws when SCOPUS_RESULTS_URL missing", async () => {
   const result = spawnSync(process.execPath, ["--input-type=module", "-e", script], { env, encoding: "utf8" });
 
   assert.notEqual(result.status, 0, "child process should fail when SCOPUS_RESULTS_URL is missing");
+});
+
+test("buildScopusUrl: includes sourceTitle as cluster param", () => {
+  const url = buildScopusUrl({ query: "q", sourceTitle: "IEEE Transactions" });
+  assert.ok(url.includes(encodeURIComponent('exactsrctitle,"IEEE Transactions",t')));
+});
+
+test("buildScopusUrl: includes authors filter appended to s param", () => {
+  const u = new URL(buildScopusUrl({ query: "q", authors: ["Smith J", "Johnson A"] }));
+  const s = u.searchParams.get("s");
+  assert.ok(s.includes('AUTH('), `s param should contain AUTH: ${s}`);
+  assert.ok(s.includes('"Smith J"'), `s param should contain Smith J: ${s}`);
+  assert.ok(s.includes('"Johnson A"'), `s param should contain Johnson A: ${s}`);
+});
+
+test("buildScopusUrl: includes affiliations filter appended to s param", () => {
+  const u = new URL(buildScopusUrl({ query: "q", affiliations: ["MIT", "Stanford"] }));
+  const s = u.searchParams.get("s");
+  assert.ok(s.includes('AFFIL('), `s param should contain AFFIL: ${s}`);
+  assert.ok(s.includes('"MIT"'), `s param should contain MIT: ${s}`);
+  assert.ok(s.includes('"Stanford"'), `s param should contain Stanford: ${s}`);
+});
+
+test("buildScopusUrl: includes countries filter appended to s param", () => {
+  const u = new URL(buildScopusUrl({ query: "q", countries: ["USA", "Germany"] }));
+  const s = u.searchParams.get("s");
+  assert.ok(s.includes('AFFILCOUNTRY('), `s param should contain AFFILCOUNTRY: ${s}`);
+  assert.ok(s.includes('"USA"'), `s param should contain USA: ${s}`);
+  assert.ok(s.includes('"Germany"'), `s param should contain Germany: ${s}`);
+});
+
+test("buildScopusUrl: includes conferences filter appended to s param", () => {
+  const u = new URL(buildScopusUrl({ query: "q", conferences: ["ICC", "GLOBECOM"] }));
+  const s = u.searchParams.get("s");
+  assert.ok(s.includes('CONF('), `s param should contain CONF: ${s}`);
+  assert.ok(s.includes('"ICC"'), `s param should contain ICC: ${s}`);
+  assert.ok(s.includes('"GLOBECOM"'), `s param should contain GLOBECOM: ${s}`);
+});
+
+test("buildScopusUrl: includes publishers filter appended to s param", () => {
+  const u = new URL(buildScopusUrl({ query: "q", publishers: ["IEEE", "Elsevier"] }));
+  const s = u.searchParams.get("s");
+  assert.ok(s.includes('PUBLISHER('), `s param should contain PUBLISHER: ${s}`);
+  assert.ok(s.includes('"IEEE"'), `s param should contain IEEE: ${s}`);
+  assert.ok(s.includes('"Elsevier"'), `s param should contain Elsevier: ${s}`);
+});
+
+test("buildScopusUrl: includes language filter appended to s param", () => {
+  const u = new URL(buildScopusUrl({ query: "q", language: "English" }));
+  assert.ok(u.searchParams.get("s").includes('LANGUAGE("English")'));
+});
+
+test("buildScopusUrl: omits optional filters when not provided", () => {
+  const url = buildScopusUrl({ query: "q" });
+  assert.ok(!url.includes("SRCTITLE"));
+  assert.ok(!url.includes("AUTH"));
+  assert.ok(!url.includes("AFFIL"));
+  assert.ok(!url.includes("AFFILCOUNTRY"));
+  assert.ok(!url.includes("CONF"));
+  assert.ok(!url.includes("PUBLISHER"));
+  assert.ok(!url.includes("LANGUAGE"));
+});
+
+test("buildScopusUrl: combines exclusion with sourceTitle cluster", () => {
+  const url = buildScopusUrl({ query: "q", exclusion: "test", sourceTitle: "IEEE" });
+  const u = new URL(url);
+  assert.ok(u.searchParams.get("st1").includes("AND NOT (test)"));
+  assert.ok(url.includes(encodeURIComponent('exactsrctitle,"IEEE",t')));
 });

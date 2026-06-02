@@ -54,9 +54,11 @@ function installFakeDOM({ queryResults = {}, heading = null } = {}) {
 
   globalThis.document = {
     body: fakeElement("body"),
+    getElementById(_id) { return null; },
     querySelector(selector) {
       return queryResults[selector] ?? null;
     },
+    querySelectorAll(selector) { return queryResults[selector] ? [queryResults[selector]] : []; },
     createTreeWalker(_root, _whatToShow, filter) {
       let consumed = false;
 
@@ -225,31 +227,45 @@ test("extractFromText: leading semicolon does not produce empty keyword", () => 
 });
 
 test("extractFromDOM: extracts from keyword data-testid section", () => {
-  const section = fakeElement("", {
-    "a, button, span[class], li": [
-      fakeElement(" machine learning ; AI "),
-      fakeElement("AI"),
-      fakeElement("x"),
-      fakeElement("data mining|neural networks")
-    ]
-  });
+  const kwEls = [
+    fakeElement(" machine learning ; AI "),
+    fakeElement("AI"),
+    fakeElement("x"),
+    fakeElement("data mining|neural networks")
+  ];
+  const section = {
+    textContent: "",
+    querySelector(_sel) { return null; },
+    querySelectorAll(sel) {
+      if (sel === "dl") return [];
+      if (sel === "a, button, span[class], li") return kwEls;
+      return [];
+    },
+    previousElementSibling: null,
+    parentElement: null,
+  };
 
-  installFakeDOM({
-    queryResults: {
-      '[data-testid*="keyword" i], [data-testid*="Keyword"]': section
-    }
-  });
+  globalThis.NodeFilter = { SHOW_ELEMENT: 1, FILTER_ACCEPT: 1, FILTER_SKIP: 3 };
+  globalThis.document = {
+    body: fakeElement("body"),
+    getElementById(_id) { return null; },
+    querySelector(_sel) { return null; },
+    querySelectorAll(sel) {
+      if (sel === '[data-testid*="keyword" i]') return [section];
+      return [];
+    },
+    createTreeWalker() { return { nextNode() { return null; } }; },
+  };
 
-  assert.deepEqual(extractFromDOM(), {
-    source: "testid",
-    keywords: ["machine learning", "AI", "data mining", "neural networks"]
-  });
+  const result = extractFromDOM();
+  assert.equal(result.source, "testid");
+  assert.deepEqual(result.keywords, ["machine learning", "AI", "data mining", "neural networks"]);
 });
 
-test("extractFromDOM: returns heading-parent keywords before other heading fallbacks", () => {
+test("extractFromDOM: returns heading-parent keywords", () => {
   const heading = fakeElement("Author Keywords");
   const parent = fakeElement("", {
-    "a": [
+    "a, span, li": [
       fakeElement("Author Keywords"),
       fakeElement("alpha"),
       fakeElement("beta")
@@ -259,36 +275,34 @@ test("extractFromDOM: returns heading-parent keywords before other heading fallb
 
   installFakeDOM({ heading });
 
-  assert.deepEqual(extractFromDOM(), {
-    source: "heading-parent",
-    keywords: ["alpha", "beta"]
-  });
+  const result = extractFromDOM();
+  assert.equal(result.source, "heading");
+  assert.deepEqual(result.keywords, ["alpha", "beta"]);
 });
 
 test("extractFromDOM: extracts from following sibling when parent has no keyword links", () => {
   const heading = fakeElement("Author Keyword");
-  heading.parentElement = fakeElement("", { "a": [] });
-  const emptySibling = fakeElement("", { "a, span, button": [] });
+  heading.parentElement = fakeElement("", { "a, span, li": [] });
+  const emptySibling = fakeElement("", { "a, span, button, li": [] });
   const keywordSibling = fakeElement("", {
-    "a, span, button": [fakeElement("gamma"), fakeElement("delta")]
+    "a, span, button, li": [fakeElement("gamma"), fakeElement("delta")]
   });
   heading.nextElementSibling = emptySibling;
   setSiblings([emptySibling, keywordSibling]);
 
   installFakeDOM({ heading });
 
-  assert.deepEqual(extractFromDOM(), {
-    source: "heading-sibling",
-    keywords: ["gamma", "delta"]
-  });
+  const result = extractFromDOM();
+  assert.equal(result.source, "heading");
+  assert.deepEqual(result.keywords, ["gamma", "delta"]);
 });
 
 test("extractFromDOM: extracts from heading grandparent when parent and siblings are empty", () => {
   const heading = fakeElement("Author Keywords");
-  const parent = fakeElement("", { "a": [] });
+  const parent = fakeElement("", { "a, span, li": [] });
   const grandparent = fakeElement("", {
     "a": [
-      fakeElement("Author Keyword"),
+      fakeElement("Author Keywords"),
       fakeElement("epsilon"),
       fakeElement("zeta")
     ]
@@ -298,10 +312,9 @@ test("extractFromDOM: extracts from heading grandparent when parent and siblings
 
   installFakeDOM({ heading });
 
-  assert.deepEqual(extractFromDOM(), {
-    source: "heading-grandparent",
-    keywords: ["epsilon", "zeta"]
-  });
+  const result = extractFromDOM();
+  assert.equal(result.source, "heading");
+  assert.deepEqual(result.keywords, ["epsilon", "zeta"]);
 });
 
 test("extractFromDOM: extracts from supported keyword class selectors", () => {
@@ -343,4 +356,154 @@ test("extractFromDOM: returns null when no DOM keyword source is found", () => {
   installFakeDOM();
 
   assert.equal(extractFromDOM(), null);
+});
+
+// ── id-exact strategy ────────────────────────────────────────────────────────
+
+function fakeSpan(text) {
+  return { textContent: text, querySelectorAll: () => [] };
+}
+
+function fakeEl(selectorMap = {}) {
+  return {
+    textContent: Object.values(selectorMap).flat().map(e => e.textContent).join(" "),
+    querySelectorAll(sel) { return selectorMap[sel] ?? []; },
+    getElementById: undefined,
+  };
+}
+
+function installIdExactDOM({ authorEl = null, indexedEl = null } = {}) {
+  globalThis.NodeFilter = { SHOW_ELEMENT: 1, FILTER_ACCEPT: 1, FILTER_SKIP: 3 };
+  globalThis.document = {
+    body: fakeElement("body"),
+    getElementById(id) {
+      if (id === "document-details-author-keywords") return authorEl;
+      if (id === "document-details-indexed-keywords") return indexedEl;
+      return null;
+    },
+    querySelector() { return null; },
+    querySelectorAll() { return []; },
+    createTreeWalker(_root, _whatToShow, _filter) {
+      return { nextNode() { return null; } };
+    },
+  };
+}
+
+test("extractFromDOM (id-exact): extracts author keywords by ID", () => {
+  const authorEl = fakeEl({
+    "a, button, span[class], li": [
+      fakeElement("machine learning"),
+      fakeElement("neural networks"),
+    ]
+  });
+
+  installIdExactDOM({ authorEl });
+
+  const result = extractFromDOM();
+  assert.equal(result.source, "id-exact");
+  assert.deepEqual(result.keywords, ["machine learning", "neural networks"]);
+  assert.equal(result.groups.length, 1);
+  assert.equal(result.groups[0].type, "author");
+  assert.deepEqual(result.groups[0].keywords, ["machine learning", "neural networks"]);
+});
+
+test("extractFromDOM (id-exact): parses indexed dl/dt/dd subgroups", () => {
+  function fakeDl(labelText, kwText) {
+    const dtStrong = { textContent: labelText };
+    const ddSpan = { textContent: kwText };
+    return {
+      querySelector(sel) {
+        if (sel === "dt") return { textContent: labelText };
+        return null;
+      },
+      querySelectorAll(sel) {
+        if (sel === "dd span, dd a, dd li") return [{ textContent: kwText }];
+        return [];
+      },
+    };
+  }
+
+  const indexedEl = {
+    querySelectorAll(sel) {
+      if (sel === "dl") return [
+        fakeDl("Engineering controlled terms", "Antennas; Deep learning"),
+        fakeDl("Engineering uncontrolled terms", "Aerial vehicle; Implementation"),
+        fakeDl("Engineering main heading", "Optimization"),
+      ];
+      return [];
+    },
+  };
+
+  installIdExactDOM({ indexedEl });
+
+  const result = extractFromDOM();
+  assert.equal(result.source, "id-exact");
+
+  const types = result.groups.map(g => g.type);
+  assert.ok(types.includes("indexed-controlled"), "should have indexed-controlled");
+  assert.ok(types.includes("indexed-uncontrolled"), "should have indexed-uncontrolled");
+
+  const controlled = result.groups.find(g => g.type === "indexed-controlled");
+  assert.deepEqual(controlled.keywords, ["Antennas", "Deep learning"]);
+
+  const uncontrolled = result.groups.find(g => g.type === "indexed-uncontrolled");
+  assert.deepEqual(uncontrolled.keywords, ["Aerial vehicle", "Implementation"]);
+
+  assert.ok(result.keywords.includes("Antennas"));
+  assert.ok(result.keywords.includes("Aerial vehicle"));
+  assert.ok(result.keywords.includes("Optimization"));
+});
+
+test("extractFromDOM (id-exact): merges author + indexed keywords into flat list, deduped", () => {
+  const authorEl = fakeEl({
+    "a, button, span[class], li": [fakeElement("UAV"), fakeElement("Deep learning")]
+  });
+
+  function fakeDl(label, text) {
+    return {
+      querySelector() { return { textContent: label }; },
+      querySelectorAll(sel) {
+        return sel === "dd span, dd a, dd li" ? [{ textContent: text }] : [];
+      },
+    };
+  }
+
+  const indexedEl = {
+    querySelectorAll(sel) {
+      if (sel === "dl") return [fakeDl("Engineering controlled terms", "Deep learning; Wireless networks")];
+      return [];
+    },
+  };
+
+  installIdExactDOM({ authorEl, indexedEl });
+
+  const result = extractFromDOM();
+  assert.equal(result.source, "id-exact");
+  // "Deep learning" appears in both author and indexed → deduped in flat keywords
+  const deepLearningCount = result.keywords.filter(k => k === "Deep learning").length;
+  assert.equal(deepLearningCount, 1);
+  assert.ok(result.keywords.includes("UAV"));
+  assert.ok(result.keywords.includes("Wireless networks"));
+});
+
+test("extractFromDOM (id-exact): returns null when both IDs missing and no fallbacks match", () => {
+  installIdExactDOM();
+  assert.equal(extractFromDOM(), null);
+});
+
+test("extractFromDOM (id-exact): falls back to flat extraction when indexed has no dl elements", () => {
+  const indexedEl = {
+    querySelectorAll(sel) {
+      if (sel === "dl") return [];
+      if (sel === "a, span[class], li") return [{ textContent: "fallback-kw" }];
+      return [];
+    },
+  };
+
+  installIdExactDOM({ indexedEl });
+
+  const result = extractFromDOM();
+  assert.equal(result.source, "id-exact");
+  assert.ok(result.keywords.includes("fallback-kw"));
+  assert.equal(result.groups[0].type, "indexed");
 });

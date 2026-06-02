@@ -7,6 +7,7 @@ import path from "node:path";
 import {
   ensureDir, readJson, writeJson, appendJsonl,
   readJsonlIds, findLatestLinks, readAllDoneIds, countFailures,
+  readAllDoneIdsFromAllSessions, findLatestLinksFiles,
 } from "../../src/shared/utils.mjs";
 
 function tmp(prefix = "utils-test-") {
@@ -209,5 +210,99 @@ test("countFailures: coerces numeric ids to strings", () => {
     const counts = countFailures(dir);
     assert.equal(counts.get("42"), 2);
     assert.equal(counts.get(42), undefined);
+  } finally { cleanup(root); }
+});
+
+// ── readAllDoneIdsFromAllSessions ─────────────────────────────────────────────
+
+test("readAllDoneIdsFromAllSessions: collects done ids from multiple session subdirs", () => {
+  const root = tmp();
+  try {
+    const s1 = path.join(root, "2026-01-01_00h00m00s");
+    const s2 = path.join(root, "2026-01-02_00h00m00s");
+    ensureDir(path.join(s1, "results"));
+    ensureDir(path.join(s1, "no-keywords"));
+    ensureDir(path.join(s2, "results"));
+    ensureDir(path.join(s2, "no-keywords"));
+
+    fs.writeFileSync(path.join(s1, "results", "results-a.jsonl"), '{"id":"A1","keywords":["x"]}\n{"id":"A2","keywords":[]}\n');
+    fs.writeFileSync(path.join(s1, "no-keywords", "no-keywords-a.jsonl"), '{"id":"N1"}\n');
+    fs.writeFileSync(path.join(s2, "results", "results-b.jsonl"), '{"id":"B1","keywords":["y"]}\n');
+
+    const ids = readAllDoneIdsFromAllSessions(root);
+    assert.ok(ids instanceof Set);
+    assert.deepEqual([...ids].sort(), ["A1", "B1", "N1"]);
+  } finally { cleanup(root); }
+});
+
+test("readAllDoneIdsFromAllSessions: deduplicates ids across sessions", () => {
+  const root = tmp();
+  try {
+    const s1 = path.join(root, "sess-1");
+    const s2 = path.join(root, "sess-2");
+    ensureDir(path.join(s1, "results"));
+    ensureDir(path.join(s2, "results"));
+
+    fs.writeFileSync(path.join(s1, "results", "r.jsonl"), '{"id":"DUP","keywords":["k"]}\n');
+    fs.writeFileSync(path.join(s2, "results", "r.jsonl"), '{"id":"DUP","keywords":["k"]}\n');
+
+    const ids = readAllDoneIdsFromAllSessions(root);
+    assert.equal([...ids].filter(id => id === "DUP").length, 1);
+  } finally { cleanup(root); }
+});
+
+test("readAllDoneIdsFromAllSessions: returns empty Set for missing directory", () => {
+  const ids = readAllDoneIdsFromAllSessions(path.join(os.tmpdir(), "no-such-" + Date.now()));
+  assert.ok(ids instanceof Set);
+  assert.equal(ids.size, 0);
+});
+
+test("readAllDoneIdsFromAllSessions: ignores non-directory entries", () => {
+  const root = tmp();
+  try {
+    fs.writeFileSync(path.join(root, "not-a-dir.txt"), "noise");
+    const s1 = path.join(root, "sess-ok");
+    ensureDir(path.join(s1, "results"));
+    fs.writeFileSync(path.join(s1, "results", "r.jsonl"), '{"id":"ONLY","keywords":["k"]}\n');
+
+    const ids = readAllDoneIdsFromAllSessions(root);
+    assert.deepEqual([...ids], ["ONLY"]);
+  } finally { cleanup(root); }
+});
+
+// ── findLatestLinksFiles ──────────────────────────────────────────────────────
+
+test("findLatestLinksFiles: finds links-*.json recursively across subdirs", () => {
+  const root = tmp();
+  try {
+    const s1 = path.join(root, "2026-01-01");
+    const s2 = path.join(root, "2026-01-02");
+    ensureDir(s1); ensureDir(s2);
+
+    fs.writeFileSync(path.join(s1, "links-ntn-uav-2026-01-01.json"), "[]");
+    fs.writeFileSync(path.join(s1, "links-ntn-leo-2026-01-01.json"), "[]");
+    fs.writeFileSync(path.join(s2, "links-ntn-uav-2026-01-02.json"), "[]");
+    fs.writeFileSync(path.join(s1, "results.jsonl"), "noise");
+
+    const files = findLatestLinksFiles(root, Infinity);
+    assert.equal(files.length, 3);
+    assert.ok(files.every(f => path.basename(f).startsWith("links-") && f.endsWith(".json")));
+  } finally { cleanup(root); }
+});
+
+test("findLatestLinksFiles: returns empty array for missing directory", () => {
+  const files = findLatestLinksFiles(path.join(os.tmpdir(), "no-such-" + Date.now()), Infinity);
+  assert.deepEqual(files, []);
+});
+
+test("findLatestLinksFiles: respects limit parameter", () => {
+  const root = tmp();
+  try {
+    ensureDir(root);
+    for (let i = 0; i < 5; i++) {
+      fs.writeFileSync(path.join(root, `links-id${i}-ts.json`), "[]");
+    }
+    const files = findLatestLinksFiles(root, 3);
+    assert.equal(files.length, 3);
   } finally { cleanup(root); }
 });

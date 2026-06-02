@@ -13,6 +13,7 @@ yarn-debug.log*
 yarn-error.log*
 .DS_Store
 Thumbs.db
+package-lock.json
 
 # Playwright
 playwright-report/
@@ -21,3 +22,8 @@ blob-report/
 # Project files
 data/
 artifacts/
+
+.codex
+MEMORY.md
+SESSIONS.md
+SPEC.md

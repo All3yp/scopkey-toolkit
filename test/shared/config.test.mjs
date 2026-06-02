@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import {
   buildRuntimeConfig,
   resolveSecret,
+  resolveChromiumExecutablePath,
 } from "../../src/shared/config.mjs";
 
 test("resolveSecret: returns raw value on non-PASS input", () => {
@@ -48,6 +49,33 @@ test("resolveSecret: bypasses PASS command on win32", () => {
   assert.equal(out, "PASS:any/path");
 });
 
+test("resolveChromiumExecutablePath: prefers explicit env and known system chromium", () => {
+  assert.equal(
+    resolveChromiumExecutablePath({ CHROMIUM_EXECUTABLE_PATH: "/tmp/chromium" }, {
+      platform: "linux",
+      exists() {
+        return false;
+      },
+      exec() {
+        throw new Error("should not be called");
+      },
+    }),
+    "/tmp/chromium"
+  );
+
+  const detected = resolveChromiumExecutablePath({}, {
+    platform: "linux",
+    exists(candidate) {
+      return candidate === "/usr/bin/chromium";
+    },
+    exec() {
+      throw new Error("should not be called when common path exists");
+    },
+  });
+
+  assert.equal(detected, "/usr/bin/chromium");
+});
+
 test("buildRuntimeConfig: detectLang fallback when detector is disabled", async () => {
   const runtime = buildRuntimeConfig({
     env: {
@@ -56,14 +84,17 @@ test("buildRuntimeConfig: detectLang fallback when detector is disabled", async 
       CAFE_PASSWORD: "",
       CHROMIUM_EXECUTABLE_PATH: "",
       CAFE_AUTO_CLICK_LOGIN: "",
-    }
+    },
+    exists(candidate) {
+      return candidate === "/usr/bin/chromium";
+    },
   });
 
   assert.equal(await runtime.detectLang("qualquer"), "en");
   assert.equal(await runtime.translateIfNeeded("already-en"), "already-en");
   assert.equal(runtime.SETTINGS.cafeUsername, "mock_username");
   assert.equal(runtime.SETTINGS.cafePassword, "mock_password");
-  assert.equal(runtime.SETTINGS.executablePath, undefined);
+  assert.equal(runtime.SETTINGS.executablePath, "/usr/bin/chromium");
   assert.equal(runtime.SETTINGS.cafeAutoClickLogin, false);
 });
 
@@ -83,6 +114,9 @@ test("buildRuntimeConfig: detectLang success and translate success", async () =>
       CHROMIUM_EXECUTABLE_PATH: "/tmp/chromium",
     },
     DetectLanguageCtor: FakeDetector,
+    exists(candidate) {
+      return candidate === "/tmp/chromium";
+    },
     translateModule: {
       async default(text, options) {
         assert.equal(options.from, "pt");
@@ -108,6 +142,9 @@ test("buildRuntimeConfig: detectLang catch + translateIfNeeded catch + un short-
   const runtimeWithFailingDetector = buildRuntimeConfig({
     env: { DETECTLANGUAGE_API_KEY: "fake-key" },
     DetectLanguageCtor: FailingDetector,
+    exists() {
+      return false;
+    },
   });
   assert.equal(await runtimeWithFailingDetector.detectLang("texto"), "en");
 
@@ -119,6 +156,9 @@ test("buildRuntimeConfig: detectLang catch + translateIfNeeded catch + un short-
   const runtimeWithTranslateError = buildRuntimeConfig({
     env: { DETECTLANGUAGE_API_KEY: "fake-key" },
     DetectLanguageCtor: PortugueseDetector,
+    exists() {
+      return false;
+    },
     translateModule: {
       async default() {
         throw new Error("forced translate error");
@@ -135,6 +175,9 @@ test("buildRuntimeConfig: detectLang catch + translateIfNeeded catch + un short-
   const runtimeWithUn = buildRuntimeConfig({
     env: { DETECTLANGUAGE_API_KEY: "fake-key" },
     DetectLanguageCtor: UnknownDetector,
+    exists() {
+      return false;
+    },
   });
   assert.equal(await runtimeWithUn.translateIfNeeded("texto bruto"), "texto bruto");
 });

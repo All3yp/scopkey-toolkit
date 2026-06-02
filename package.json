@@ -1,23 +1,38 @@
 {
   "name": "scopkey-toolkit",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
+  "files": [
+    "src/",
+    "config/",
+    "scripts/",
+    "test/",
+    ".env.EXAMPLE",
+    "README.md",
+    "doc.md",
+    "LICENSE.md"
+  ],
   "scripts": {
     "setup:env": "node src/scripts/setup-env.mjs",
     "setup": "npm install && npm run setup:env",
-    "postinstall": "playwright install chromium",
+    "postinstall": "node -e \"console.log('Skipping Playwright browser download; using system Chromium when available.')\"",
     "login": "node src/scripts/login.mjs",
     "collect": "node src/pipeline/collect-links.mjs",
     "extract": "node src/pipeline/extract-keywords.mjs",
     "collect-extract": "node src/pipeline/collect-extract.mjs",
     "clean": "node src/pipeline/clean-keywords.mjs",
+    "abstracts": "node src/pipeline/extract-abstracts.mjs",
+    "dedupe": "node src/pipeline/dedupe-articles.mjs",
+    "categorize": "node src/pipeline/categorize-articles.mjs",
+    "download": "node src/pipeline/download-articles.mjs",
     "rank": "node src/pipeline/rank-keywords.mjs",
     "sortby": "node src/pipeline/sort-results.mjs",
     "test": "node --test",
     "test:coverage": "node --test --experimental-test-coverage",
-    "build": "tsc --noEmit --incremental",
+    "build": "node --check src/**/*.mjs",
     "check": "npm run build && npm test",
+    "release": "node scripts/release.mjs",
     "prepare": "husky"
   },
   "dependencies": {
@@ -31,6 +46,7 @@
     "axios": "^1.7.4"
   },
   "devDependencies": {
-    "husky": "^9.1.7"
+    "husky": "^9.1.7",
+    "typescript": "^6.0.3"
   }
 }

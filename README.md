@@ -6,13 +6,19 @@ Como o acesso normal do site não permitia obter essas keywords de forma direta,
 Espero que este projeto te seja útil!, passei uns dias e madrugadas me dedicando a ele. (ᴗ˳ᴗ)ᶻz
 
 - fluxo completo de coleta, extração, limpeza, ranking e ordenação local
+- extração de múltiplos grupos de keywords (Author Keywords, Indexed Keywords, Engineering terms)
+- extração de abstract integrada ao mesmo passo do `extract`
+- deduplicação de artigos com saída em JSONL, JSON e CSV
+- categorização por grupos de pesquisa configuráveis
 - persistência de sessão em `artifacts/session/auth-cookies.json`
 - saídas versionadas por timestamp em `artifacts/output/`
+- 158 testes unitários com cobertura ~93%
 
 ## Fluxo
 
 ```
-searches.json → collect → extract → clean / rank / sortby
+searches.json → collect → extract → abstracts → dedupe → categorize
+                                  ↘ clean / rank / sortby
 ```
 
 ## Configuração
@@ -49,10 +55,11 @@ CHROMIUM_EXECUTABLE_PATH=      # opcional: caminho do Chromium
   "yearTo": 2026,
   "docTypes": ["ar", "cp"],
   "sortBy": "date|citedBy|relevance",
-  "sortDirection": "newest|oldest|highest|lowest",
-  "maxResults": 200
+  "sortDirection": "newest|oldest|highest|lowest"
 }]
 ```
+
+> `maxResults` foi removido — a coleta agora pagina todos os resultados encontrados pelo Scopus sem limite.
 
 ## Comandos
 
@@ -66,24 +73,32 @@ npm run login    # autentica via CAFe e salva sessão em artifacts/session/auth-
 ### Pipeline
 
 ```bash
-npm run collect                         # coleta links (resume automático)
-npm run extract                         # extrai keywords (incremental, 2 abas)
+npm run collect                         # coleta links (resume automático, sem limite)
+npm run extract                         # extrai keywords + abstract (incremental, 2 abas)
 npm run extract -- --concurrency 3      # extração paralela com 3 abas
 npm run collect-extract                 # collect + extract em paralelo
-npm run clean                           # deduplicação + tradução automática
+npm run abstracts                       # extrai abstracts separadamente (sessões anteriores)
+npm run dedupe                          # consolida todos os extracts → JSONL + JSON + CSV
+npm run categorize                      # categoriza artigos por grupos de pesquisa
+npm run clean                           # deduplicação + tradução automática de keywords
 npm run rank                            # ranking de keywords por citações
 ```
 
 ### O que cada comando gera
 
-- `npm run collect`: cria `artifacts/output/collect/links-<ts>.json` com os artigos encontrados por busca.
-- `npm run extract`: tenta extrair keywords de cada artigo.
-- `artifacts/output/extract/results/`: registros com keywords encontradas.
-- `artifacts/output/extract/failures/`: erros de processamento da tentativa (ex.: timeout, bloqueio, erro de página).
-- `artifacts/output/extract/no-keywords/`: registros sem keywords após as tentativas de retry.
-- `npm run collect-extract`: executa coleta e extração em sequência.
-- `npm run clean`: normaliza/deduplica keywords e salva em `artifacts/output/extract/clean/`.
-- `npm run rank`: gera ranking de keywords e de artigos em `artifacts/output/extract/ranked/`.
+- `npm run collect` → `artifacts/output/collect/<ts>/links-<id>-<ts>.json` por configuração de busca
+- `npm run extract` → por sessão em `artifacts/output/extract/<ts>/`:
+  - `results/results-<ts>.jsonl` — keywords + abstract + groups por artigo
+  - `failures/failures-<ts>.jsonl` — erros técnicos de tentativa
+  - `no-keywords/no-keywords-<ts>.jsonl` — artigos sem keywords após retries
+- `npm run abstracts` → `artifacts/output/extract/<ts>/abstracts/abstracts-<ts>.jsonl`
+- `npm run dedupe` → `artifacts/output/extract/deduped/`:
+  - `articles-deduped.jsonl` — um artigo por linha
+  - `articles-deduped.json` — array JSON completo (fácil de abrir/baixar)
+  - `articles-deduped.csv` — planilha com todas as colunas
+- `npm run categorize` → `artifacts/output/extract/deduped/articles-categorized.jsonl`
+- `npm run clean` → `artifacts/output/extract/clean/clean-<ts>.jsonl`
+- `npm run rank` → `artifacts/output/extract/ranked/`
 
 ### Ordenação local
 
@@ -120,15 +135,22 @@ artifacts/
 │   └── auth-cookies.json                    # sessão persistida pelo login
 └── output/
     ├── collect/
-    │   └── links-<ts>.json                  # artigos coletados
+    │   └── <ts>/
+    │       └── links-<id>-<ts>.json         # artigos por busca (sem limite de paginação)
     ├── extract/
-    │   ├── results/results-<ts>.jsonl       # artigos com keywords
-    │   ├── failures/failures-<ts>.jsonl     # erros e retries
-    │   ├── no-keywords/no-keywords-<ts>.jsonl
-    │   ├── clean/clean-<ts>.jsonl           # keywords limpas
+    │   ├── <ts>/                            # sessão de extração
+    │   │   ├── results/results-<ts>.jsonl   # keywords + abstract + groups
+    │   │   ├── abstracts/abstracts-<ts>.jsonl
+    │   │   ├── failures/failures-<ts>.jsonl
+    │   │   └── no-keywords/no-keywords-<ts>.jsonl
+    │   ├── deduped/
+    │   │   ├── articles-deduped.jsonl       # todos os artigos, sem duplicatas
+    │   │   ├── articles-deduped.json        # idem em JSON
+    │   │   └── articles-deduped.csv         # idem em CSV
+    │   ├── clean/clean-<ts>.jsonl           # keywords normalizadas/traduzidas
     │   └── ranked/
-    │       ├── ranked-keywords-<ts>.jsonl   # keywords por citações
-    │       └── ranked-articles-<ts>.jsonl   # artigos por citações
+    │       ├── ranked-keywords-<ts>.jsonl
+    │       └── ranked-articles-<ts>.jsonl
     └── sorted/
         └── <preset>/
             └── <busca>-<ts>.jsonl           # artigos reordenados
@@ -192,6 +214,44 @@ Para testar localmente:
 ./.husky/pre-commit
 ./.husky/pre-push
 ```
+
+## Contribuindo
+
+### Fork e PR
+
+```bash
+# 1. Fork no GitHub → clone do seu fork
+git clone https://github.com/<seu-usuario>/scopkey-toolkit.git
+cd scopkey-toolkit
+
+# 2. Instalar dependências
+npm install
+
+# 3. Criar branch
+git checkout -b feat/minha-mudanca
+
+# 4. Fazer as alterações e garantir que tudo passa
+npm test
+
+# 5. Commit e push
+git add .
+git commit -m "feat: descrição da mudança"
+git push origin feat/minha-mudanca
+
+# 6. Abrir PR no GitHub
+```
+
+O CI roda `npm test` automaticamente em todo PR. O template de PR em `.github/PULL_REQUEST_TEMPLATE.md` guia o que preencher.
+
+### Criar um release (mantenedores)
+
+```bash
+npm run release           # patch: 0.x.y → 0.x.(y+1)
+npm run release -- minor  # minor: 0.x.y → 0.(x+1).0
+npm run release -- major  # major: 0.x.y → 1.0.0
+```
+
+O script valida testes, bumpa a versão, faz commit + tag e push. Para gerar o pacote comprimido: `npm pack`.
 
 ## Licença
 
