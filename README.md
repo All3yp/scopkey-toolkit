@@ -10,6 +10,7 @@ Espero que este projeto te seja útil!, passei uns dias e madrugadas me dedicand
 - extração de abstract integrada ao mesmo passo do `extract`
 - deduplicação de artigos com saída em JSONL, JSON e CSV
 - categorização por grupos de pesquisa configuráveis
+- **download automático de PDFs via IEEE Xplore com autenticação CAPES/CAFe** _(v2.1)_
 - persistência de sessão em `artifacts/session/auth-cookies.json`
 - saídas versionadas por timestamp em `artifacts/output/`
 - 158 testes unitários com cobertura ~93%
@@ -19,6 +20,7 @@ Espero que este projeto te seja útil!, passei uns dias e madrugadas me dedicand
 ```
 searches.json → collect → extract → abstracts → dedupe → categorize
                                   ↘ clean / rank / sortby
+                                                          ↘ download
 ```
 
 ## Configuração
@@ -43,6 +45,8 @@ SLOW_MO=50
 DELAY_MS=1500
 CAFE_STEP_DELAY_MS=1200
 CHROMIUM_EXECUTABLE_PATH=      # opcional: caminho do Chromium
+
+IEEE_BASE_URL=                 # URL base do IEEE Xplore via proxy CAPES (ex: https://ieeexplore-ieee-org.ez138.periodicos.capes.gov.br/document/)
 ```
 
 ### 2. Buscas (`config/searches.json`)
@@ -80,6 +84,7 @@ npm run collect-extract                 # collect + extract em paralelo
 npm run abstracts                       # extrai abstracts separadamente (sessões anteriores)
 npm run dedupe                          # consolida todos os extracts → JSONL + JSON + CSV
 npm run categorize                      # categoriza artigos por grupos de pesquisa
+npm run download                        # baixa PDFs dos artigos deduplicados (requer IEEE_ARTICLE_URL no .env)
 npm run clean                           # deduplicação + tradução automática de keywords
 npm run rank                            # ranking de keywords por citações
 ```
@@ -97,6 +102,9 @@ npm run rank                            # ranking de keywords por citações
   - `articles-deduped.json` — array JSON completo (fácil de abrir/baixar)
   - `articles-deduped.csv` — planilha com todas as colunas
 - `npm run categorize` → `artifacts/output/extract/deduped/articles-categorized.jsonl`
+- `npm run download` → `artifacts/output/extract/downloads/`:
+  - `<id>_<titulo>.pdf` — PDF de cada artigo
+  - `logs/downloads-<ts>.jsonl` — log de cada sessão (sucesso/falha por artigo)
 - `npm run clean` → `artifacts/output/extract/clean/clean-<ts>.jsonl`
 - `npm run rank` → `artifacts/output/extract/ranked/`
 
@@ -147,6 +155,9 @@ artifacts/
     │   │   ├── articles-deduped.jsonl       # todos os artigos, sem duplicatas
     │   │   ├── articles-deduped.json        # idem em JSON
     │   │   └── articles-deduped.csv         # idem em CSV
+    │   ├── downloads/
+    │   │   ├── <id>_<titulo>.pdf            # PDFs baixados
+    │   │   └── logs/downloads-<ts>.jsonl    # log de cada sessão de download
     │   ├── clean/clean-<ts>.jsonl           # keywords normalizadas/traduzidas
     │   └── ranked/
     │       ├── ranked-keywords-<ts>.jsonl
@@ -169,6 +180,12 @@ Exemplo mostrando a coleta dos links/artigos a partir das buscas configuradas no
 Neste arquivo, você pode adicionar mais opções de busca, atualmente existe um exemplo para "nanosatelites".
 
 O fluxo de `extract` não aparece nesses dois prints.
+
+**Download (`npm run download`)**
+Exemplo mostrando o download incremental de PDFs via IEEE Xplore autenticado pelo proxy CAPES. O script retoma de onde parou, pulando artigos já baixados com sucesso.
+![Terminal - download](assets/screenshots/downloaded.png)
+
+O fluxo navega automaticamente pelo Scopus → IEEE Xplore → `stamp.jsp` → `getPDF.jsp`, reutilizando a sessão do browser para contornar o bloqueio de bot do proxy CloudFront.
 
 **Extract (`npm run extract`)**
 Exemplo mostrando a extração dos keywords a partir das buscas configuradas no `config/searches.json`.

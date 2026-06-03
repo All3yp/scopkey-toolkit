@@ -3,12 +3,19 @@ import path from "node:path";
 import "dotenv/config";
 import { chromium } from "playwright";
 import { PATHS, SETTINGS } from "../shared/config.mjs";
-import { readJson, appendJsonl, sleep } from "../shared/utils.mjs";
+import { readJson, appendJsonl, sleep, ensureDir } from "../shared/utils.mjs";
 import { log } from "../shared/logger.mjs";
 import { acceptCookies, ensureSession, checkSession } from "../browser/session.mjs";
 
 const MAX_RETRIES = 2;
 const DEFAULT_CONCURRENCY = 1;
+
+const DEDUPED_FILE = path.join(PATHS.outputDir, "extract", "deduped", "articles-deduped.jsonl");
+const DOWNLOADS_DIR = path.join(PATHS.outputDir, "extract", "downloads");
+const DOWNLOADS_LOG = path.join(DOWNLOADS_DIR, "logs", `downloads-${PATHS.sessionTs}.jsonl`);
+
+const IEEE_BASE_URL = process.env.IEEE_ARTICLE_URL ?? "https://ieeexplore-ieee-org.ez138.periodicos.capes.gov.br/document/";
+const IEEE_PDF_XPATH = '/html/body/div[7]/div/div/div[4]/div/xpl-root/main/div/xpl-document-details/div/div[1]/section[2]/div/xpl-document-header/section/div[2]/div/div/div[1]/div/div[1]/div/div[3]';
 
 function releaseStaleLock(userDataDir) {
   const lockPath = path.join(userDataDir, "SingletonLock");
@@ -38,83 +45,186 @@ async function extractDOIFromPage(page) {
   });
 }
 
-async function clickFullTextAndGetPublisherPage(context, page) {
+async function clickViewPDFAndGetPage(context, page) {
   log.step("Aguardando renderização completa...");
   await page.waitForLoadState('networkidle', { timeout: 15000 }).catch(() => sleep(3000));
 
-  const allImgs = await page.evaluate(() =>
-    [...document.querySelectorAll('img')].map(i => ({
-      src: i.getAttribute('src') || '',
-      alt: i.getAttribute('alt') || '',
-      parentTag: i.parentElement?.tagName,
-      closestBtn: !!i.closest('button'),
-    }))
-  );
-  const relevant = allImgs.filter(i => i.src.includes('capes') || i.alt.toLowerCase().includes('full text') || i.closestBtn);
-  log.step(`Imagens relevantes na página: ${JSON.stringify(relevant.slice(0, 5))}`);
+  log.step("Procurando botão View PDF / Full Text...");
 
-  log.step("Procurando botão Full Text...");
-
-  // Seletores baseados no HTML real do Scopus/CAPES:
-  // <button><img src="...scopusbutton_capesbr.gif" alt="Full Text (opens in new window)"></button>
   const candidates = [
-    page.locator('button:has(img[src*="capesbr"])').first(),
-    page.locator('button:has(img[src*="capes"])').first(),
-    page.locator('button:has(img[alt*="Full Text"])').first(),
-    page.locator('button:has(img[alt="Full Text (opens in new window)"])').first(),
-    page.locator('img[src*="capesbr"]').first(),
-    page.locator('img[alt*="Full Text"]').first(),
+    { locator: page.locator('button').filter({ hasText: /^View PDF/i }).first(), label: 'View PDF (texto)' },
+    { locator: page.locator('button:has(img[src*="capesbr"])').first(), label: 'Full Text (img capesbr)' },
+    { locator: page.locator('button:has(img[src*="capes"])').first(), label: 'Full Text (img capes)' },
+    { locator: page.locator('button:has(img[alt*="Full Text"])').first(), label: 'Full Text (img alt)' },
   ];
 
   let btn = null;
-  for (const candidate of candidates) {
-    const visible = await candidate.isVisible({ timeout: 2000 }).catch(() => false);
-    if (visible) {
-      btn = candidate;
-      const src = await candidate.getAttribute('src').catch(async () =>
-        await candidate.locator('img').getAttribute('src').catch(() => '')
-      );
-      log.step(`Botão encontrado: src="${src}"`);
-      break;
-    }
+  let label = '';
+  for (const c of candidates) {
+    const visible = await c.locator.isVisible({ timeout: 2000 }).catch(() => false);
+    if (visible) { btn = c.locator; label = c.label; break; }
   }
 
   if (!btn) {
-    log.warn("Botão Full Text (CAPES) não encontrado");
+    log.warn("Nenhum botão View PDF / Full Text encontrado");
     return null;
   }
 
+  log.step(`Botão encontrado: "${label}"`);
   const popupPromise = context.waitForEvent('page', { timeout: 20000 }).catch(() => null);
-
   await btn.click();
-  log.step("Clicado via Playwright, aguardando nova aba...");
 
   const popup = await popupPromise;
   if (popup) {
-    log.step(`Nova aba: ${popup.url()}`);
-    await popup.waitForLoadState('domcontentloaded', { timeout: 30000 });
-    await sleep(3000);
+    await popup.waitForLoadState('domcontentloaded', { timeout: 20000 }).catch(() => {});
+
+    let waited = 0;
+    let currentUrl = await popup.evaluate(() => document.URL);
+
+    while (!/\/document\/\d+/.test(currentUrl) && waited < 30000) {
+      await sleep(500);
+      waited += 500;
+      currentUrl = await popup.evaluate(() => document.URL);
+    }
+
+    if (!/\/document\/\d+/.test(currentUrl)) {
+      log.warn(`Timeout aguardando ID. URL: ${currentUrl}`);
+    } else {
+      log.step(`Aguardado ${waited}ms para ID`);
+    }
+    log.step(`Nova aba: ${currentUrl}`);
     return popup;
   }
 
-  await sleep(5000);
-  const pagesAfter = context.pages().length;
-  log.step(`Pages após click: ${pagesAfter}`);
-
-  const urlAfter = page.url();
-  if (!urlAfter.includes('scopus.com')) {
-    log.step(`Navegação na mesma aba: ${urlAfter}`);
-    return page;
-  }
-
-  if (pagesAfter > 2) {
-    const latest = context.pages()[context.pages().length - 1];
-    log.step(`Aba extra detectada: ${latest.url()}`);
+  await sleep(3000);
+  const pages = context.pages();
+  if (pages.length > 1) {
+    const latest = pages[pages.length - 1];
+    log.step(`Aba detectada: ${latest.url()}`);
     return latest;
   }
 
-  log.warn("Nenhuma navegação detectada");
+  log.warn("Nenhuma nova aba detectada após clique");
   return null;
+}
+
+function extractIEEEArticleId(url) {
+  let decoded = url;
+  try { decoded = decodeURIComponent(url); } catch {}
+  const patterns = [
+    /\/document\/(\d+)/i,
+    /[?&]arnumber=(\d+)/i,
+    /\/(\d+)\.pdf/i,
+  ];
+  for (const p of patterns) {
+    const m = decoded.match(p);
+    if (m) return m[1];
+  }
+  return null;
+}
+
+function isIEEEUrl(url) {
+  return /ieee\.org/i.test(url);
+}
+
+function remapToProxy(url) {
+  try {
+    const u = new URL(url);
+    const proxyBase = new URL(IEEE_BASE_URL);
+    u.hostname = proxyBase.hostname;
+    u.port = proxyBase.port;
+    u.protocol = proxyBase.protocol;
+    return u.toString();
+  } catch {
+    return url;
+  }
+}
+
+async function fetchPDFFromStampPage(context, stampUrl, filepath) {
+  const stampPage = await context.newPage();
+  try {
+    log.step(`IEEE: navegando para stamp: ${stampUrl}`);
+    await stampPage.goto(stampUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
+    await stampPage.waitForTimeout(3000);
+
+    const pageUrl = stampPage.url();
+    log.step(`IEEE: stamp page URL: ${pageUrl}`);
+
+    const getPdfUrl = await stampPage.evaluate(() => {
+      const el = document.querySelector('iframe[src*="getPDF"], embed[src*="getPDF"], iframe[src*="pdf"], embed[src*="pdf"]');
+      return el ? el.src || el.getAttribute('src') : null;
+    });
+
+    if (!getPdfUrl) {
+      log.warn('IEEE: iframe getPDF não encontrado');
+      return false;
+    }
+
+    const proxyUrl = remapToProxy(getPdfUrl);
+    log.step(`IEEE: getPDF URL: ${proxyUrl}`);
+
+    const result = await stampPage.evaluate(async (url) => {
+      try {
+        const r = await fetch(url, { credentials: 'include' });
+        if (!r.ok) return { error: `status ${r.status}` };
+        const ct = r.headers.get('content-type') || '';
+        if (!ct.includes('pdf')) return { error: `content-type ${ct}` };
+        const buf = await r.arrayBuffer();
+        let binary = '';
+        const bytes = new Uint8Array(buf);
+        const chunk = 0x8000;
+        for (let i = 0; i < bytes.length; i += chunk) {
+          binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk));
+        }
+        return { base64: btoa(binary) };
+      } catch (e) {
+        return { error: e.message };
+      }
+    }, proxyUrl).catch((e) => ({ error: e.message }));
+
+    if (result.error) {
+      log.warn(`IEEE: fetch falhou: ${result.error}`);
+      return false;
+    }
+
+    await fs.promises.writeFile(filepath, Buffer.from(result.base64, 'base64'));
+    return true;
+  } finally {
+    await stampPage.close().catch(() => {});
+  }
+}
+
+async function downloadIEEEPDF(context, ieeeUrl, downloadsDir, filename) {
+  log.step(`IEEE proxy: navegando para ${ieeeUrl}`);
+  const ieeePage = await context.newPage();
+  try {
+    await ieeePage.goto(ieeeUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
+    await ieeePage.waitForLoadState('networkidle', { timeout: 15000 }).catch(() => {});
+    await sleep(2000);
+
+    const stampHref = await ieeePage.evaluate(() => {
+      const el = document.querySelector('a.xpl-btn-pdf[href*="stamp.jsp"], a[href*="stamp.jsp"]');
+      return el ? el.getAttribute('href') : null;
+    });
+
+    if (stampHref) {
+      const origin = new URL(ieeeUrl).origin;
+      const stampRaw = stampHref.startsWith('http') ? stampHref : `${origin}${stampHref}`;
+      const stampUrl = remapToProxy(stampRaw);
+      const filepath = path.join(downloadsDir, filename);
+      log.step(`IEEE: baixando via stamp: ${stampUrl}`);
+      const ok = await fetchPDFFromStampPage(context, stampUrl, filepath).catch(() => false);
+      if (ok) {
+        log.step(`IEEE: PDF salvo em ${filepath}`);
+        return { success: true, filename, filepath };
+      }
+    }
+
+    log.warn('IEEE: nenhuma estratégia funcionou');
+    return { success: false, error: 'ieee-pdf-not-found' };
+  } finally {
+    await ieeePage.close().catch(() => {});
+  }
 }
 
 async function clickPDFAndDownload(publisherPage, downloadsDir, filename) {
@@ -149,7 +259,6 @@ async function clickPDFAndDownload(publisherPage, downloadsDir, filename) {
 
   const filepath = path.join(downloadsDir, filename);
 
-  // Se tem href direto, navega para ele para forçar o download
   if (pdfHref) {
     const baseUrl = publisherPage.url().replace(/\/document\/.*/, '');
     const absoluteHref = pdfHref.startsWith('http') ? pdfHref : `${new URL(publisherPage.url()).origin}${pdfHref}`;
@@ -171,7 +280,6 @@ async function clickPDFAndDownload(publisherPage, downloadsDir, filename) {
       return { success: true, filename, filepath };
     }
 
-    // Se abriu nova aba com o PDF, tenta capturar download dela
     if (newTab) {
       log.step(`Nova aba PDF: ${newTab.url()}`);
       const tabDownload = await newTab.waitForEvent('download', { timeout: 15000 }).catch(() => null);
@@ -179,24 +287,6 @@ async function clickPDFAndDownload(publisherPage, downloadsDir, filename) {
         await tabDownload.saveAs(filepath);
         return { success: true, filename, filepath };
       }
-      const tabUrl = newTab.url();
-      if (tabUrl.endsWith('.pdf') || tabUrl.includes('/pdf/') || tabUrl.includes('stamp')) {
-        const resp = await publisherPage.context().request.get(tabUrl).catch(() => null);
-        if (resp) {
-          await fs.promises.writeFile(filepath, await resp.body());
-          return { success: true, filename, filepath };
-        }
-      }
-    }
-
-    // Fallback: GET direto na URL do stamp
-    log.step(`Tentando fetch direto: ${absoluteHref}`);
-    const resp = await publisherPage.context().request.get(absoluteHref, {
-      headers: { 'Accept': 'application/pdf,*/*' },
-    }).catch(() => null);
-    if (resp && resp.ok()) {
-      await fs.promises.writeFile(filepath, await resp.body());
-      return { success: true, filename, filepath };
     }
   }
 
@@ -213,80 +303,80 @@ async function downloadArticlePDF(context, page, article, downloadsDir) {
   const filename = `${article.id}_${safeTitle}.pdf`;
 
   try {
-    const publisherPage = await clickFullTextAndGetPublisherPage(context, page);
+    const publisherPage = await clickViewPDFAndGetPage(context, page);
 
     if (!publisherPage) {
       return { success: false, error: "no-publisher-access", doi };
     }
 
-    await acceptCookies(publisherPage);
-    await sleep(2000);
+    await acceptCookies(publisherPage).catch(() => {});
+    await sleep(1500);
+
+    const publisherUrl = publisherPage.url();
+    log.step(`Publisher URL: ${publisherUrl}`);
+
+    if (isIEEEUrl(publisherUrl)) {
+      const ieeeId = extractIEEEArticleId(publisherUrl);
+      if (!ieeeId) {
+        log.warn(`IEEE URL sem ID de artigo: ${publisherUrl}`);
+        await publisherPage.close().catch(() => {});
+        return { success: false, error: 'ieee-no-article-id', doi, publisherUrl };
+      }
+      log.step(`IEEE article ID detectado: ${ieeeId}`);
+      await publisherPage.close().catch(() => {});
+
+      if (publisherUrl.includes('stamp.jsp')) {
+        const stampProxyUrl = remapToProxy(publisherUrl);
+        const filepath = path.join(downloadsDir, filename);
+        const ok = await fetchPDFFromStampPage(context, stampProxyUrl, filepath).catch(() => false);
+        if (ok) return { success: true, filename, filepath, doi, publisherUrl };
+      }
+
+      const ieeeUrl = `${IEEE_BASE_URL}${ieeeId}`;
+      const result = await downloadIEEEPDF(context, ieeeUrl, downloadsDir, filename);
+      return { ...result, doi, publisherUrl };
+    }
 
     const result = await clickPDFAndDownload(publisherPage, downloadsDir, filename);
-
     await publisherPage.close().catch(() => {});
-
-    return {
-      ...result,
-      doi,
-      publisherUrl: publisherPage.url(),
-    };
+    return { ...result, doi, publisherUrl };
   } catch (err) {
     return { success: false, error: err.message, doi };
   }
 }
 
-function listResultFiles(resultsDir) {
-  try {
-    return fs.readdirSync(resultsDir)
-      .filter(f => /^results-.*\.jsonl$/i.test(f))
-      .sort()
-      .map(f => path.join(resultsDir, f));
-  } catch (err) {
-    log.error(`Erro lendo results: ${err.message}`);
-    return [];
-  }
-}
-
-function shouldUseAllResults() {
-  return process.argv.slice(2).includes("--all-results");
-}
-
-function readAllResultsFromDir(resultsDir, { latestOnly = true } = {}) {
-  const seen = new Set();
+function readFromDeduped(dedupedFile) {
   const items = [];
-
-  const files = listResultFiles(resultsDir);
-  const selectedFiles = latestOnly && files.length > 0 ? [files.at(-1)] : files;
-
-  for (const file of selectedFiles) {
-    const lines = fs.readFileSync(file, "utf8").split("\n");
-    for (const line of lines) {
-      const trimmed = line.trim();
-      if (!trimmed) continue;
-      try {
-        const obj = JSON.parse(trimmed);
-        const id = String(obj.id || "");
-        if (!id || seen.has(id)) continue;
-        seen.add(id);
-        items.push({
-          id,
-          title: obj.title,
-          url: obj.sourceLink || obj.url,
-        });
-      } catch {}
-    }
+  let lines;
+  try {
+    lines = fs.readFileSync(dedupedFile, "utf8").split("\n");
+  } catch {
+    return items;
   }
-
-  return { items, files: selectedFiles };
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    try {
+      const obj = JSON.parse(trimmed);
+      const id = String(obj.id || "");
+      if (!id) continue;
+      items.push({
+        id,
+        title: obj.title,
+        url: obj.sourceLink || obj.url,
+      });
+    } catch {}
+  }
+  return items;
 }
 
-function readDoneDownloadIds(downloadsDir) {
+function readDoneDownloadIds() {
+  const logsDir = path.join(DOWNLOADS_DIR, "logs");
   const ids = new Set();
   try {
-    const files = fs.readdirSync(downloadsDir)
+    const files = fs.readdirSync(logsDir)
       .filter(f => /^downloads-.*\.jsonl$/i.test(f))
-      .map(f => path.join(downloadsDir, f));
+      .map(f => path.join(logsDir, f));
 
     for (const file of files) {
       const lines = fs.readFileSync(file, "utf8").split("\n");
@@ -304,7 +394,7 @@ function readDoneDownloadIds(downloadsDir) {
 }
 
 async function saveDownloadResult(item, result) {
-  appendJsonl(PATHS.downloads, {
+  appendJsonl(DOWNLOADS_LOG, {
     id: item.id,
     title: item.title,
     ...result,
@@ -313,7 +403,7 @@ async function saveDownloadResult(item, result) {
 }
 
 export async function runArticleDownloader(context, page, items, { doneIds, concurrency = DEFAULT_CONCURRENCY, downloadsDir } = {}) {
-  const done = doneIds ?? readDoneDownloadIds(PATHS.downloadsDir);
+  const done = doneIds ?? readDoneDownloadIds();
   const pending = items.filter(item => !done.has(String(item.id)));
 
   let successCount = 0;
@@ -388,18 +478,19 @@ async function main() {
 
   releaseStaleLock(PATHS.userDataDir);
 
-  const latestOnly = !shouldUseAllResults();
-  const { items, files } = readAllResultsFromDir(PATHS.resultsDir, { latestOnly });
+  const items = readFromDeduped(DEDUPED_FILE);
   if (items.length === 0) {
-    log.error("Nenhum resultado encontrado em resultsDir. Execute a extração primeiro.");
+    log.error(`Nenhum artigo encontrado em ${DEDUPED_FILE}. Execute npm run dedupe primeiro.`);
     process.exit(1);
   }
 
-  log.info(`Modo: ${latestOnly ? "arquivo results mais recente" : "todos os arquivos results"}`);
-  log.info(`Lendo: ${files.map(f => path.basename(f)).join(", ")}`);
-  log.info(`Artigos únicos com keywords: ${items.length}`);
+  log.info(`Lendo: ${path.basename(DEDUPED_FILE)}`);
+  log.info(`Artigos deduplicados: ${items.length}`);
 
-  const doneIds = readDoneDownloadIds(PATHS.downloadsDir);
+  ensureDir(DOWNLOADS_DIR);
+  ensureDir(path.join(DOWNLOADS_DIR, "logs"));
+
+  const doneIds = readDoneDownloadIds();
   log.info(`Downloads já feitos: ${doneIds.size}`);
 
   const pending = items.filter(item => !doneIds.has(String(item.id)));
@@ -425,14 +516,14 @@ async function main() {
     const { successCount, failCount } = await runArticleDownloader(context, page, items, {
       doneIds,
       concurrency: DEFAULT_CONCURRENCY,
-      downloadsDir: PATHS.downloadsDir,
+      downloadsDir: DOWNLOADS_DIR,
     });
 
     log.header("Download Complete");
     log.done(`${successCount} PDFs baixados`);
     if (failCount > 0) log.warn(`${failCount} falhas`);
-    log.step(`Registros salvos em: ${PATHS.downloads}`);
-    log.step(`PDFs em: ${PATHS.downloadsDir}`);
+    log.step(`Registros salvos em: ${DOWNLOADS_LOG}`);
+    log.step(`PDFs em: ${DOWNLOADS_DIR}`);
     log.divider();
   } finally {
     await context.close();
