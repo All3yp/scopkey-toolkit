@@ -204,7 +204,6 @@ function deduplicateByField(items, field) {
 async function main() {
   const concurrency = parseConcurrencyArg();
 
-  // Load all links files across ALL collect sessions (parent dir)
   const allCollectDir = path.join(PATHS.collectDir, "..");
   const collectFiles = findLatestLinksFiles(allCollectDir, Infinity);
 

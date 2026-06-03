@@ -32,14 +32,12 @@ function buildHaystack(article) {
 function matchesCategory(article, cat) {
   const haystack = buildHaystack(article);
 
-  // cross: array de grupos — todos os grupos devem ter ao menos 1 match (AND)
   if (cat.cross) {
     return cat.cross.every(group =>
       group.some(kw => haystack.includes(kw.toLowerCase()))
     );
   }
 
-  // keywords normal: qualquer match (OR)
   return (cat.keywords ?? []).some(kw => haystack.includes(kw.toLowerCase()));
 }
 
@@ -100,7 +98,6 @@ function main() {
 
   ensureDir(CATEGORIES_DIR);
 
-  // Remove JSONLs obsoletos que não pertencem às categorias atuais
   const validFiles = new Set([...categories.map(c => `${c.id}.jsonl`), 'uncategorized.jsonl']);
   for (const f of fs.readdirSync(CATEGORIES_DIR)) {
     if (f.endsWith('.jsonl') && !validFiles.has(f)) {

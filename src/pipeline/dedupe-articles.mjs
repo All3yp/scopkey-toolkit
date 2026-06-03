@@ -107,10 +107,8 @@ function main() {
     appendJsonl(DEDUPED_FILE, entry);
   }
 
-  // JSON
   fs.writeFileSync(DEDUPED_JSON, JSON.stringify(enriched, null, 2), "utf8");
 
-  // CSV — columns: id, title, abstract, keywords (semicolon-joined), groups summary, source, sourceLink
   const CSV_FIELDS = ["id", "title", "abstract", "keywords", "authorKeywords", "indexedKeywords", "source", "sourceLink"];
   const csvRows = [CSV_FIELDS.join(",")];
   for (const item of enriched) {
