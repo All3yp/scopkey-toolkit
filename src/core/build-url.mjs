@@ -1,9 +1,11 @@
 import { SETTINGS, PATHS } from "../shared/config.mjs";
 import fs from "node:fs";
 
+const categoriesPath = PATHS.searches.replace("searches.json", "categories.json");
+const categoriesFallbackPath = categoriesPath.replace("categories.json", "categories.example.json");
 const CATEGORIES = JSON.parse(
   fs.readFileSync(
-    PATHS.searches.replace("searches.json", "categories.json"),
+    fs.existsSync(categoriesPath) ? categoriesPath : categoriesFallbackPath,
     "utf8"
   )
 ).categories;
