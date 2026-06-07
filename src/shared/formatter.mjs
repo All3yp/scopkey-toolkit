@@ -86,7 +86,7 @@ export const fmt = {
 
     console.log(line("─"));
     console.log(`  ${c.green}${c.bold}Total geral:${c.reset} ${c.cyan}${totalArticles}${c.reset} ${c.dim}artigos em ${results.length} buscas${c.reset}`);
-    console.log(`  ${c.dim}Salvo em: ${outputPath}${c.reset}`);
+    if (totalArticles > 0) console.log(`  ${c.dim}Salvo em: ${outputPath}${c.reset}`);
     console.log(line("═"));
   },
 

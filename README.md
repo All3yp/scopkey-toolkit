@@ -11,9 +11,12 @@ Espero que este projeto te seja útil!, passei uns dias e madrugadas me dedicand
 - deduplicação de artigos com saída em JSONL, JSON e CSV
 - categorização por grupos de pesquisa configuráveis
 - **download automático de PDFs via IEEE Xplore com autenticação CAPES/CAFe** _(v2.1)_
+- **queries via `TITLE-ABS-KEY` com busca avançada** _(v0.4)_
+- **`query` opcional — buscas definidas inteiramente via `categoryIds`** _(v0.4)_
+- **ordenação padrão por citações (`citedBy`)** _(v0.4)_
 - persistência de sessão em `artifacts/session/auth-cookies.json`
 - saídas versionadas por timestamp em `artifacts/output/`
-- 158 testes unitários com cobertura ~93%
+- arquivos de busca vazios não são salvos (0 artigos coletados)
 
 ## Fluxo
 
@@ -51,17 +54,35 @@ IEEE_BASE_URL=                 # URL base do IEEE Xplore via proxy CAPES (ex: ht
 
 ### 2. Buscas (`config/searches.json`)
 
+Define as buscas a serem realizadas. Apenas `id` e pelo menos um entre `query` ou `categoryIds` são obrigatórios — todos os outros campos são opcionais.
+
 ```json
-[{
-  "name": "id-busca",
-  "query": "termos AND busca",
-  "yearFrom": 2020,
-  "yearTo": 2026,
-  "docTypes": ["ar", "cp"],
-  "sortBy": "date|citedBy|relevance",
-  "sortDirection": "newest|oldest|highest|lowest"
-}]
+[
+  {
+    "id": "minha-busca",
+    "categoryIds": ["cat_a", "cat_b"],
+    "yearFrom": 2020,
+    "yearTo": 2026,
+    "docTypes": ["ar", "re"],
+    "sortBy": "citedBy"
+  },
+  {
+    "id": "busca-com-query",
+    "query": "(\"meu termo\" OR \"termo alternativo\")",
+    "categoryIds": ["cat_a"],
+    "sourceTitle": "IEEE Transactions on Communications",
+    "yearFrom": 2020,
+    "yearTo": 2026,
+    "docTypes": ["ar"],
+    "sortBy": "citedBy"
+  }
+]
 ```
+
+- **`query` é opcional** — se omitido, a query vem inteiramente dos `categoryIds`
+- **`categoryIds`** combina múltiplas categorias com `AND` entre elas
+- A query final é sempre encapsulada em `TITLE-ABS-KEY(...)` (busca avançada)
+- Buscas que retornam 0 artigos não geram arquivo de saída
 
 > `maxResults` foi removido — a coleta agora pagina todos os resultados encontrados pelo Scopus sem limite.
 

@@ -99,7 +99,12 @@ export function resolveScopusSort(search) {
 }
 
 function categoryToQueryBlock(category) {
-  if (category.cross) {
+  if (category.cross?.length) {
+    // flat array of strings → single OR block
+    if (typeof category.cross[0] === "string") {
+      return `(${category.cross.map((k) => `"${k}"`).join(" OR ")})`;
+    }
+    // array of arrays → AND of OR groups
     return category.cross
       .map((group) => `(${group.map((k) => `"${k}"`).join(" OR ")})`)
       .join(" AND ");
@@ -119,13 +124,14 @@ export function buildScopusUrl(search) {
     throw new Error("SCOPUS_RESULTS_URL não definido no ambiente.");
   }
 
-  if (!search.query) {
-    throw new Error("Campo 'query' é obrigatório em searches.json.");
+  if (!search.query && !search.categoryIds?.length) {
+    throw new Error("'query' ou 'categoryIds' é obrigatório em searches.json.");
   }
 
   const {
-    query,
+    query = "",
     exclusion,
+    
     sourceTitle,
     authors = [],
     affiliations = [],
@@ -139,11 +145,13 @@ export function buildScopusUrl(search) {
     categoryIds = [],
   } = search;
 
-  // st1 = base query (field 1: All fields)
-  const st1 = exclusion ? `${query} AND NOT (${exclusion})` : query;
+  // base query (optional when categoryIds contains all terms)
+  const baseQuery = query
+    ? (exclusion ? `${query} AND NOT (${exclusion})` : query)
+    : "";
 
-  // st2 = category keywords block (field 2: All fields)
-  let st2 = "";
+  // category keywords block
+  let categoryBlock = "";
   if (categoryIds?.length) {
     const categoryBlocks = [];
     for (const categoryId of categoryIds) {
@@ -152,24 +160,26 @@ export function buildScopusUrl(search) {
       const block = categoryToQueryBlock(category);
       if (block) categoryBlocks.push(block);
     }
-    if (categoryBlocks.length) st2 = categoryBlocks.join(" AND ");
+    if (categoryBlocks.length) categoryBlock = categoryBlocks.join(" AND ");
   }
 
-  // s = full combined query used internally by Scopus
-  const sParts = [st1];
-  if (st2) sParts.push(st2);
-  const s = sParts.join(" AND ");
+  // s = full advanced query using TITLE-ABS-KEY for precision
+  const innerParts = [];
+  if (baseQuery) innerParts.push(baseQuery);
+  if (categoryBlock) innerParts.push(categoryBlock);
+  const inner = innerParts.join(" AND ");
+  const s = `TITLE-ABS-KEY(${inner})`;
 
   const params = new URLSearchParams({
-    st1,
-    st2,
+    st1: "",
+    st2: "",
     s,
     limit: "200",
     origin: "resultslist",
     sort: resolveScopusSort(search),
     src: "s",
-    sot: "b",
-    sdt: "cl",
+    sot: "a",
+    sdt: "a",
   });
 
   if (yearFrom) params.set("yearFrom", String(yearFrom));

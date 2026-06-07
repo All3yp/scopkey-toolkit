@@ -1,19 +1,28 @@
 [
   {
-    "id": "example-search",
-    "query": "(\"your search term\" OR \"alternative term\")",
-    "categoryIds": [],
-    "exclusion": "",
-    "sourceTitle": "",
-    "authors": [],
-    "affiliations": [],
-    "countries": [],
-    "conferences": [],
-    "publishers": [],
-    "language": "",
+    "id": "example-keywords-only",
+    "categoryIds": ["ex_category_a", "ex_category_b"],
     "yearFrom": 2020,
     "yearTo": 2026,
-    "docTypes": ["ar", "re", "cp"],
-    "sortBy": "relevance"
+    "docTypes": ["ar", "re"],
+    "sortBy": "citedBy"
+  },
+  {
+    "id": "example-with-query",
+    "query": "(\"your search term\" OR \"alternative term\")",
+    "categoryIds": ["ex_category_a"],
+    "yearFrom": 2020,
+    "yearTo": 2026,
+    "docTypes": ["ar"],
+    "sortBy": "citedBy"
+  },
+  {
+    "id": "example-with-source",
+    "categoryIds": ["ex_category_b"],
+    "sourceTitle": "IEEE Transactions on Communications",
+    "yearFrom": 2020,
+    "yearTo": 2026,
+    "docTypes": ["ar", "re"],
+    "sortBy": "citedBy"
   }
 ]

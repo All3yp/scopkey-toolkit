@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 process.env.SCOPUS_RESULTS_URL = "https://scopus.example/results/results.uri";
+process.env.NODE_ENV = "test";
 
 const { resolveScopusSort, buildScopusUrl } = await import("../../src/core/build-url.mjs");
 
@@ -78,19 +79,30 @@ test("buildScopusUrl: composes core query params and defaults", () => {
   const url = buildScopusUrl({ query: "machine learning" });
   const u = new URL(url);
   assert.equal(u.origin + u.pathname, "https://scopus.example/results/results.uri");
-  assert.equal(u.searchParams.get("st1"), "machine learning");
+  assert.equal(u.searchParams.get("st1"), "");
   assert.equal(u.searchParams.get("st2"), "");
-  assert.equal(u.searchParams.get("s"), "machine learning");
+  assert.equal(u.searchParams.get("s"), "TITLE-ABS-KEY(machine learning)");
   assert.equal(u.searchParams.get("limit"), "200");
   assert.equal(u.searchParams.get("origin"), "resultslist");
   assert.equal(u.searchParams.get("sort"), "cp-f");
   assert.equal(u.searchParams.get("src"), "s");
-  assert.equal(u.searchParams.get("sot"), "b");
-  assert.equal(u.searchParams.get("sdt"), "cl");
+  assert.equal(u.searchParams.get("sot"), "a");
+  assert.equal(u.searchParams.get("sdt"), "a");
 });
 
 test("buildScopusUrl: limit is always 200 regardless of input", () => {
   assert.equal(new URL(buildScopusUrl({ query: "q" })).searchParams.get("limit"), "200");
+});
+
+test("buildScopusUrl: query is optional when categoryIds provided", () => {
+  const url = buildScopusUrl({ categoryIds: ["ex_category_a"] });
+  const s = new URL(url).searchParams.get("s");
+  assert.ok(s.startsWith("TITLE-ABS-KEY("), `s should start with TITLE-ABS-KEY: ${s}`);
+  assert.ok(!s.includes("undefined"), `s should not contain undefined: ${s}`);
+});
+
+test("buildScopusUrl: throws when neither query nor categoryIds provided", () => {
+  assert.throws(() => buildScopusUrl({}), /'query' ou 'categoryIds'/);
 });
 
 test("buildScopusUrl: includes year range when provided", () => {
@@ -125,8 +137,7 @@ test("buildScopusUrl: forwards resolved sort (sortBy=date, oldest → plf-t)", (
 test("buildScopusUrl: URL-encodes special characters in query", () => {
   const url = buildScopusUrl({ query: "a & b" });
   const u = new URL(url);
-  assert.equal(u.searchParams.get("st1"), "a & b");
-  assert.ok(url.includes("st1=a+%26+b") || url.includes("st1=a%20%26%20b"));
+  assert.equal(u.searchParams.get("s"), "TITLE-ABS-KEY(a & b)");
 });
 
 test("buildScopusUrl: throws when SCOPUS_RESULTS_URL missing", async () => {
@@ -147,54 +158,78 @@ test("buildScopusUrl: throws when SCOPUS_RESULTS_URL missing", async () => {
   assert.notEqual(result.status, 0, "child process should fail when SCOPUS_RESULTS_URL is missing");
 });
 
+test("buildScopusUrl: wraps query in TITLE-ABS-KEY", () => {
+  const s = new URL(buildScopusUrl({ query: "NTN" })).searchParams.get("s");
+  assert.equal(s, "TITLE-ABS-KEY(NTN)");
+});
+
+test("buildScopusUrl: uses sot=a and sdt=a for advanced search mode", () => {
+  const u = new URL(buildScopusUrl({ query: "q" }));
+  assert.equal(u.searchParams.get("sot"), "a");
+  assert.equal(u.searchParams.get("sdt"), "a");
+});
+
+test("buildScopusUrl: st1 and st2 are always empty strings", () => {
+  const u = new URL(buildScopusUrl({ query: "test query" }));
+  assert.equal(u.searchParams.get("st1"), "");
+  assert.equal(u.searchParams.get("st2"), "");
+});
+
 test("buildScopusUrl: includes sourceTitle as cluster param", () => {
   const url = buildScopusUrl({ query: "q", sourceTitle: "IEEE Transactions" });
   assert.ok(url.includes(encodeURIComponent('exactsrctitle,"IEEE Transactions",t')));
 });
 
-test("buildScopusUrl: includes authors filter appended to s param", () => {
+test("buildScopusUrl: includes authors filter appended to TITLE-ABS-KEY query", () => {
   const u = new URL(buildScopusUrl({ query: "q", authors: ["Smith J", "Johnson A"] }));
   const s = u.searchParams.get("s");
+  assert.ok(s.startsWith("TITLE-ABS-KEY("), `s should start with TITLE-ABS-KEY: ${s}`);
   assert.ok(s.includes('AUTH('), `s param should contain AUTH: ${s}`);
   assert.ok(s.includes('"Smith J"'), `s param should contain Smith J: ${s}`);
   assert.ok(s.includes('"Johnson A"'), `s param should contain Johnson A: ${s}`);
 });
 
-test("buildScopusUrl: includes affiliations filter appended to s param", () => {
+test("buildScopusUrl: includes affiliations filter appended to TITLE-ABS-KEY query", () => {
   const u = new URL(buildScopusUrl({ query: "q", affiliations: ["MIT", "Stanford"] }));
   const s = u.searchParams.get("s");
+  assert.ok(s.startsWith("TITLE-ABS-KEY("), `s should start with TITLE-ABS-KEY: ${s}`);
   assert.ok(s.includes('AFFIL('), `s param should contain AFFIL: ${s}`);
   assert.ok(s.includes('"MIT"'), `s param should contain MIT: ${s}`);
   assert.ok(s.includes('"Stanford"'), `s param should contain Stanford: ${s}`);
 });
 
-test("buildScopusUrl: includes countries filter appended to s param", () => {
+test("buildScopusUrl: includes countries filter appended to TITLE-ABS-KEY query", () => {
   const u = new URL(buildScopusUrl({ query: "q", countries: ["USA", "Germany"] }));
   const s = u.searchParams.get("s");
+  assert.ok(s.startsWith("TITLE-ABS-KEY("), `s should start with TITLE-ABS-KEY: ${s}`);
   assert.ok(s.includes('AFFILCOUNTRY('), `s param should contain AFFILCOUNTRY: ${s}`);
   assert.ok(s.includes('"USA"'), `s param should contain USA: ${s}`);
   assert.ok(s.includes('"Germany"'), `s param should contain Germany: ${s}`);
 });
 
-test("buildScopusUrl: includes conferences filter appended to s param", () => {
+test("buildScopusUrl: includes conferences filter appended to TITLE-ABS-KEY query", () => {
   const u = new URL(buildScopusUrl({ query: "q", conferences: ["ICC", "GLOBECOM"] }));
   const s = u.searchParams.get("s");
+  assert.ok(s.startsWith("TITLE-ABS-KEY("), `s should start with TITLE-ABS-KEY: ${s}`);
   assert.ok(s.includes('CONF('), `s param should contain CONF: ${s}`);
   assert.ok(s.includes('"ICC"'), `s param should contain ICC: ${s}`);
   assert.ok(s.includes('"GLOBECOM"'), `s param should contain GLOBECOM: ${s}`);
 });
 
-test("buildScopusUrl: includes publishers filter appended to s param", () => {
+test("buildScopusUrl: includes publishers filter appended to TITLE-ABS-KEY query", () => {
   const u = new URL(buildScopusUrl({ query: "q", publishers: ["IEEE", "Elsevier"] }));
   const s = u.searchParams.get("s");
+  assert.ok(s.startsWith("TITLE-ABS-KEY("), `s should start with TITLE-ABS-KEY: ${s}`);
   assert.ok(s.includes('PUBLISHER('), `s param should contain PUBLISHER: ${s}`);
   assert.ok(s.includes('"IEEE"'), `s param should contain IEEE: ${s}`);
   assert.ok(s.includes('"Elsevier"'), `s param should contain Elsevier: ${s}`);
 });
 
-test("buildScopusUrl: includes language filter appended to s param", () => {
+test("buildScopusUrl: includes language filter appended to TITLE-ABS-KEY query", () => {
   const u = new URL(buildScopusUrl({ query: "q", language: "English" }));
-  assert.ok(u.searchParams.get("s").includes('LANGUAGE("English")'));
+  const s = u.searchParams.get("s");
+  assert.ok(s.startsWith("TITLE-ABS-KEY("), `s should start with TITLE-ABS-KEY: ${s}`);
+  assert.ok(s.includes('LANGUAGE("English")'), `s should contain LANGUAGE: ${s}`);
 });
 
 test("buildScopusUrl: omits optional filters when not provided", () => {
@@ -211,6 +246,20 @@ test("buildScopusUrl: omits optional filters when not provided", () => {
 test("buildScopusUrl: combines exclusion with sourceTitle cluster", () => {
   const url = buildScopusUrl({ query: "q", exclusion: "test", sourceTitle: "IEEE" });
   const u = new URL(url);
-  assert.ok(u.searchParams.get("st1").includes("AND NOT (test)"));
+  assert.ok(u.searchParams.get("s").includes("AND NOT (test)"), `s should contain exclusion: ${u.searchParams.get("s")}`);
   assert.ok(url.includes(encodeURIComponent('exactsrctitle,"IEEE",t')));
+});
+
+test("buildScopusUrl: categoryIds with keywords generate OR block ANDed to query", () => {
+  const s = new URL(buildScopusUrl({ query: "example term", categoryIds: ["ex_category_a"] })).searchParams.get("s");
+  assert.ok(s.startsWith("TITLE-ABS-KEY("), `s should start with TITLE-ABS-KEY: ${s}`);
+  assert.ok(s.includes("example term"), `s should include query term: ${s}`);
+  assert.ok(s.includes(" AND "), `s should have AND between query and category: ${s}`);
+});
+
+test("buildScopusUrl: multiple categoryIds are ANDed together", () => {
+  const s = new URL(buildScopusUrl({ categoryIds: ["ex_category_a", "ex_category_b"] })).searchParams.get("s");
+  assert.ok(s.startsWith("TITLE-ABS-KEY("), `s should start with TITLE-ABS-KEY: ${s}`);
+  assert.ok(s.includes(" AND "), `multiple categories should be ANDed: ${s}`);
+  assert.ok(s.includes(" OR "), `each category block should use OR: ${s}`);
 });

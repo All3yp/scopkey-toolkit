@@ -296,6 +296,10 @@ export async function runCollector(page, { onBatch, existingResults = [], exclud
       results.push(entry);
       doneIds.add(s.id);
 
+      if (collected.length === 0) {
+        log.warn(`Nenhum artigo coletado para "${s.id}" — arquivo não salvo.`);
+        continue;
+      }
       const searchFile = path.join(PATHS.collectDir, `links-${s.id}-${PATHS.sessionTs}.json`);
       writeJson(searchFile, entry);
       log.step(`Salvo → ${searchFile}`);

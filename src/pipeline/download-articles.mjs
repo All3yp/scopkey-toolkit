@@ -92,7 +92,7 @@ async function clickViewPDFAndGetPage(context, page) {
     } else {
       log.step(`Aguardado ${waited}ms para ID`);
     }
-    log.step(`Nova aba: ${currentUrl}`);
+    // log.step(`Nova aba: ${currentUrl}`);
     return popup;
   }
 
@@ -316,11 +316,40 @@ async function downloadArticlePDF(context, page, article, downloadsDir) {
     log.step(`Publisher URL: ${publisherUrl}`);
 
     if (isIEEEUrl(publisherUrl)) {
-      const ieeeId = extractIEEEArticleId(publisherUrl);
+      let ieeeId = extractIEEEArticleId(publisherUrl);
       if (!ieeeId) {
-        log.warn(`IEEE URL sem ID de artigo: ${publisherUrl}`);
-        await publisherPage.close().catch(() => {});
-        return { success: false, error: 'ieee-no-article-id', doi, publisherUrl };
+        log.step("IEEE: ID não encontrado na URL, tentando extrair do DOM...");
+        ieeeId = await publisherPage.evaluate(() => {
+          const meta = document.querySelector('meta[name="articleId"], meta[property="og:url"]');
+          if (meta) {
+            const m = (meta.content || meta.getAttribute("content") || "").match(/\/document\/(\d+)/i);
+            if (m) return m[1];
+          }
+          const canonical = document.querySelector('link[rel="canonical"]');
+          if (canonical) {
+            const m = (canonical.href || "").match(/\/document\/(\d+)/i);
+            if (m) return m[1];
+          }
+          const m = document.URL.match(/\/document\/(\d+)/i);
+          if (m) return m[1];
+          const scripts = [...document.querySelectorAll('script[type="application/ld+json"]')];
+          for (const s of scripts) {
+            try {
+              const data = JSON.parse(s.textContent);
+              const url = data?.url || data?.mainEntityOfPage?.["@id"] || "";
+              const dm = url.match(/\/document\/(\d+)/i);
+              if (dm) return dm[1];
+            } catch {}
+          }
+          return null;
+        }).catch(() => null);
+        if (ieeeId) {
+          log.step(`IEEE: ID extraído do DOM: ${ieeeId}`);
+        } else {
+          log.warn(`IEEE URL sem ID de artigo: ${publisherUrl}`);
+          await publisherPage.close().catch(() => {});
+          return { success: false, error: 'ieee-no-article-id', doi, publisherUrl };
+        }
       }
       log.step(`IEEE article ID detectado: ${ieeeId}`);
       await publisherPage.close().catch(() => {});

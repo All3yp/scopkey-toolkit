@@ -1,8 +1,7 @@
 {
   "categories": [
     {
-      "id": "example_category_a",
-      "name": "Example Category A",
+      "id": "ex_category_a",
       "keywords": [
         "keyword one",
         "keyword two",
@@ -10,11 +9,10 @@
       ]
     },
     {
-      "id": "example_category_b",
-      "name": "Example Category B",
+      "id": "ex_category_b",
       "keywords": [
-        "another keyword",
-        "yet another keyword"
+        "another different keyword",
+        "yet another different keyword"
       ]
     }
   ]
