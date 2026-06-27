@@ -296,6 +296,17 @@ O script valida testes, bumpa a versão, faz commit + tag e push. Para gerar o p
 Este projeto está licenciado conforme [LICENSE.md](LICENSE.md).  
 Contribua para ampliar o acesso livre ao conhecimento! ✌️👽
 
+# How to cite (como citar):
+
+@software{scopkey_toolkit_2026,
+  author       = {Pereira, Alley},
+  title        = {{ScopKey Toolkit}: Automated Extraction of Author Keywords from {Scopus} via {CAPES/CAFe}},
+  year         = {2026},
+  url          = {https://github.com/All3yp/scopkey-toolkit},
+  version      = {0.4.0},
+  note         = {Playwright-based pipeline for search, extraction, deduplication, and categorization of Scopus records}
+}
+
 ---
 
 <sub>_Em caso de dúvidas, me contate no Telegram, @heyalley_ (⚈₋₍⚈).</sub>
