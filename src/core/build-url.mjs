@@ -12,6 +12,7 @@ const CATEGORIES = JSON.parse(
   )
 ).categories;
 
+const DEFAULT_DOC_TYPES = ["ar", "re", "cp", "ch", "ip", "bk"];
 const VALID_SORT_CODES = new Set([
   "plf-f",
   "plf-t",
@@ -141,7 +142,7 @@ export function buildScopusUrl(search) {
     language,
     yearFrom,
     yearTo,
-    docTypes = [],
+    docTypes = DEFAULT_DOC_TYPES,
     categoryIds = [],
   } = search;
 

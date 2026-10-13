@@ -33,3 +33,6 @@ MEMORY.md
 SESSIONS.md
 SPEC.md
 config/olds/
+.commandcode/
+.husky/_*
+.husky/*.lock

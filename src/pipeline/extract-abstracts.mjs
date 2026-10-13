@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import "dotenv/config";
-import { chromium } from "playwright";
+import { launchBrowser } from "../shared/browser-launch.mjs";
 import { PATHS, SETTINGS } from "../shared/config.mjs";
 import { readJson, appendJsonl, sleep } from "../shared/utils.mjs";
 import { log } from "../shared/logger.mjs";
@@ -215,13 +215,7 @@ async function main() {
     return;
   }
 
-  const context = await chromium.launchPersistentContext(PATHS.userDataDir, {
-    headless: SETTINGS.headless,
-    slowMo: SETTINGS.slowMo,
-    viewport: null,
-    executablePath: SETTINGS.executablePath,
-    args: ["--no-sandbox", "--disable-setuid-sandbox", "--start-maximized"],
-  });
+  const context = await launchBrowser(PATHS.userDataDir);
 
   try {
     const page = await context.newPage();

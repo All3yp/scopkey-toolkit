@@ -11,10 +11,15 @@ Documentação técnica completa do projeto. Para uso rápido veja o [README](RE
 3. [Módulos](#módulos)
 4. [Pipeline detalhado](#pipeline-detalhado)
 5. [Formatos de dados](#formatos-de-dados)
-6. [Configuração de buscas](#configuração-de-buscas)
-7. [Scopus Search Fields](#scopus-search-fields)
-8. [Testes e qualidade](#testes-e-qualidade)
-9. [Deploy / release](#deploy--release)
+6. [Saída](#saída)
+7. [Configuração de ambiente](#configuração-de-ambiente)
+8. [Configuração de buscas](#configuração-de-buscas)
+9. [Scopus Search Fields](#scopus-search-fields)
+10. [Testes e qualidade](#testes-e-qualidade)
+11. [Troubleshooting](#troubleshooting)
+12. [Hooks (Husky)](#hooks-husky)
+13. [Contribuindo](#contribuindo)
+14. [Screenshots](#screenshots)
 
 ---
 
@@ -26,7 +31,7 @@ O ScopKey Toolkit automatiza a extração de keywords e metadados de artigos cie
 
 | Pacote | Uso |
 |--------|-----|
-| `playwright` | Automação do browser (Chromium) |
+| `playwright` | Automação do browser (Chromium, Chrome, Edge ou Firefox do sistema) |
 | `detectlanguage` | Detecção de idioma das keywords |
 | `google-translate-api-next` | Tradução automática PT→EN |
 | `dotenv` | Carregamento de variáveis de ambiente |
@@ -40,7 +45,8 @@ src/
 ├── core/               # Lógica pura, sem I/O de pipeline
 │   ├── abstract-extract.mjs    # Extrai abstract do DOM do Scopus
 │   ├── build-url.mjs           # Constrói URLs de busca do Scopus
-│   └── keyword-extract.mjs     # Extrai keywords do DOM / texto
+│   ├── keyword-extract.mjs     # Extrai keywords do DOM / texto
+│   └── metrics-extract.mjs     # Extrai métricas do DOM do Scopus
 ├── pipeline/           # Scripts executáveis (entrada e saída de arquivos)
 │   ├── collect-links.mjs       # Coleta links de artigos
 │   ├── extract-keywords.mjs    # Extrai keywords + abstract por artigo
@@ -112,6 +118,23 @@ Função `extractAbstractFromDOM()` executada via `page.evaluate()`. Busca `#doc
 
 ---
 
+### `src/core/metrics-extract.mjs`
+
+Função `extractMetricsFromDOM()` executada via `page.evaluate()`. Coleta as métricas expostas na página do artigo e retorna um objeto (ou `null`):
+
+```json
+{
+  "citedBy": 42,
+  "references": 57,
+  "details": { "DOI": "10.1109/TVT.2024.1234567", "Publisher": "IEEE", "Document type": "Article" }
+}
+```
+
+- `citedBy` / `references` — contagens extraídas do texto da página (`Cited by N`, `N References`)
+- `details` — pares rótulo/valor (`dt`/`dd`) do documento (DOI, Publisher, ISSN, Source title, tipo etc.), ignorando as seções de keywords
+
+---
+
 ### `src/core/build-url.mjs`
 
 **`buildScopusUrl(search)`** — constrói a URL de busca completa do Scopus a partir de uma entrada de `searches.json`.
@@ -157,7 +180,7 @@ Função `extractAbstractFromDOM()` executada via `page.evaluate()`. Busca `#doc
 
 ### `src/pipeline/collect-links.mjs`
 
-- Lê `config/searches.json`, abre o browser com sessão salva
+- Lê `config/searches.json` (ou outro arquivo via `--searches`/`--input`), abre o browser com sessão salva
 - Pagina o Scopus (200 por página) até coletar todos os resultados
 - Salva `artifacts/output/collect/<ts>/links-<id>-<ts>.json` por busca
 - Incremental: retoma de onde parou se interrompido
@@ -168,8 +191,8 @@ Função `extractAbstractFromDOM()` executada via `page.evaluate()`. Busca `#doc
 
 - Lê todos os `links-*.json` da sessão de collect
 - Pula artigos já processados em **qualquer sessão anterior** (`readAllDoneIdsFromAllSessions`)
-- Para cada artigo: navega até a URL, aguarda seletores de keyword, chama `extractFromDOM` + `extractAbstractFromDOM`
-- Salva no JSONL de results: `id`, `title`, `abstract`, `keywords`, `originalKeywords`, `groups`, `source`, `sourceLink`
+- Para cada artigo: navega até a URL, aguarda seletores de keyword, chama `extractFromDOM` + `extractAbstractFromDOM` + `extractMetricsFromDOM`
+- Salva no JSONL de results: `id`, `title`, `abstract`, `keywords`, `originalKeywords`, `groups`, `metrics`, `source`, `sourceLink`
 - Falhas vão para `failures/`, sem keywords para `no-keywords/`
 
 ---
@@ -209,28 +232,28 @@ Função `extractAbstractFromDOM()` executada via `page.evaluate()`. Busca `#doc
 
 ```bash
 # 1. Autenticar (necessário apenas uma vez por sessão)
-npm run login
+make login
 
 # 2. Coletar todos os artigos das buscas configuradas
-npm run collect
+make collect
 
 # 3. Extrair keywords + abstract de todos os artigos coletados
-npm run extract
+make extract
 
 # 4. (Opcional) Extrair abstracts de sessões anteriores que não tinham
-npm run abstracts
+make abstracts
 
 # 5. Consolidar tudo em um único arquivo deduplicado
-npm run dedupe
+make dedupe
 
 # 6. Categorizar artigos por tema
-npm run categorize
+make categorize
 
 # 7. (Opcional) Limpar/traduzir keywords
-npm run clean
+make clean
 
 # 8. (Opcional) Gerar ranking
-npm run rank
+make rank
 ```
 
 ### Re-executar extract para artigos que falharam
@@ -238,13 +261,13 @@ npm run rank
 O extract é incremental — ao rodar novamente, pula automaticamente os que já estão em qualquer sessão anterior. Os artigos em `failures/` serão tentados novamente na próxima execução.
 
 ```bash
-npm run extract
+make extract
 ```
 
 ### Collect + extract simultâneos
 
 ```bash
-npm run collect-extract
+make collect-extract
 ```
 
 Roda coleta e extração em paralelo. Artigos chegam para a extração à medida que são coletados.
@@ -286,6 +309,7 @@ Um objeto JSON por linha:
     { "type": "author", "keywords": ["UAV", "Deep reinforcement learning"] },
     { "type": "indexed-controlled", "keywords": ["Deep reinforcement learning", "Path planning"] }
   ],
+  "metrics": { "citedBy": 42, "references": 57, "details": { "Publisher": "IEEE", "Document type": "Article" } },
   "source": "id-exact",
   "sourceLink": "https://www.scopus.com/record/display.uri?eid=2-s2.0-85123456789"
 }
@@ -298,6 +322,84 @@ Cabeçalho: `id,title,abstract,keywords,authorKeywords,indexedKeywords,source,so
 - `keywords` — todas as keywords, separadas por `; `
 - `authorKeywords` — somente do grupo `author`, separadas por `; `
 - `indexedKeywords` — todos os grupos não-author, deduplicadas, separadas por `; `
+
+---
+
+## Saída
+
+```text
+artifacts/
+├── browser/
+│   └── user-data/                           # perfil persistente do Playwright
+├── session/
+│   └── auth-cookies.json                    # sessão persistida pelo login
+└── output/
+    ├── collect/
+    │   └── <ts>/
+    │       └── links-<id>-<ts>.json         # artigos por busca (sem limite de paginação)
+    ├── extract/
+    │   ├── <ts>/                            # sessão de extração
+    │   │   ├── results/results-<ts>.jsonl   # keywords + abstract + groups + metrics
+    │   │   ├── abstracts/abstracts-<ts>.jsonl
+    │   │   ├── failures/failures-<ts>.jsonl
+    │   │   └── no-keywords/no-keywords-<ts>.jsonl
+    │   ├── deduped/
+    │   │   ├── articles-deduped.jsonl       # todos os artigos, sem duplicatas
+    │   │   ├── articles-deduped.json        # idem em JSON
+    │   │   └── articles-deduped.csv         # idem em CSV
+    │   ├── downloads/
+    │   │   ├── <id>_<titulo>.pdf            # PDFs baixados
+    │   │   └── logs/downloads-<ts>.jsonl    # log de cada sessão de download
+    │   ├── clean/clean-<ts>.jsonl           # keywords normalizadas/traduzidas
+    │   └── ranked/
+    │       ├── ranked-keywords-<ts>.jsonl
+    │       └── ranked-articles-<ts>.jsonl
+    └── sorted/
+        └── <preset>/
+            └── <busca>-<ts>.jsonl           # artigos reordenados
+```
+
+### O que cada comando gera
+
+- `make collect` → `artifacts/output/collect/<ts>/links-<id>-<ts>.json` por configuração de busca
+- `make extract` → por sessão em `artifacts/output/extract/<ts>/`:
+  - `results/results-<ts>.jsonl` — keywords + abstract + groups + `metrics` por artigo
+  - `failures/failures-<ts>.jsonl` — erros técnicos de tentativa
+  - `no-keywords/no-keywords-<ts>.jsonl` — artigos sem keywords após retries
+- `make abstracts` → `artifacts/output/extract/<ts>/abstracts/abstracts-<ts>.jsonl`
+- `make dedupe` → `artifacts/output/extract/deduped/` (JSONL + JSON + CSV)
+- `make categorize` → `artifacts/output/extract/deduped/articles-categorized.jsonl`
+- `make download` → `artifacts/output/extract/downloads/` (PDFs + `logs/downloads-<ts>.jsonl`)
+- `make clean` → `artifacts/output/extract/clean/clean-<ts>.jsonl`
+- `make rank` → `artifacts/output/extract/ranked/`
+
+**Fonte customizada no download:** `make download /caminho/lista.jsonl` — aceita qualquer JSONL com `id` e `sourceLink`/`url` por linha (mesmo formato de `articles-deduped.jsonl`). Sem arquivo, usa `artifacts/output/extract/deduped/articles-deduped.jsonl`.
+
+---
+
+## Configuração de ambiente
+
+Copie `.env.EXAMPLE` para `.env` e preencha:
+
+```env
+CAFE_ACCESS_URL=       # URL de acesso CAFe da sua instituição
+SCOPUS_HOME_URL=       # URL home do Scopus (via proxy)
+SCOPUS_RESULTS_URL=    # URL de resultados do Scopus (via proxy)
+
+CAFE_USERNAME=         # Usuário institucional
+CAFE_PASSWORD=         # Senha (suporta PASS:caminho/no/pass para pass(1))
+
+CAFE_INSTITUTION_ID=   # ID/nome da instituição no formulário CAFe
+CAFE_LOGIN_AUTOFILL_MODE=both   # username | password | both
+CAFE_AUTO_CLICK_LOGIN=false     # true = clica no botão automaticamente
+
+SLOW_MO=50
+DELAY_MS=1500
+CAFE_STEP_DELAY_MS=1200
+CHROMIUM_EXECUTABLE_PATH=      # opcional: caminho do browser (Chromium/Chrome/Edge/Firefox)
+
+IEEE_BASE_URL=                 # URL base do IEEE Xplore via proxy CAPES
+```
 
 ---
 
@@ -321,6 +423,8 @@ Cabeçalho: `id,title,abstract,keywords,authorKeywords,indexedKeywords,source,so
 ]
 ```
 
+> Para coletar a partir de outro arquivo de buscas (`.json` ou `.jsonl`): `make collect caminho/buscas.jsonl`. Vale também para `collect-extract` e, para o `download`, `make download caminho/lista.jsonl`.
+
 | Campo | Tipo | Descrição |
 |-------|------|-----------|
 | `name` | string | Identificador único (usado no nome dos arquivos) |
@@ -335,7 +439,7 @@ Cabeçalho: `id,title,abstract,keywords,authorKeywords,indexedKeywords,source,so
 | `language` | string? | Filtro por idioma |
 | `yearFrom` | number? | Ano inicial |
 | `yearTo` | number? | Ano final |
-| `docTypes` | string[]? | Tipos de documento (`ar`, `re`, `cp`, `ch`, `ip`) |
+| `docTypes` | string[]? | Tipos de documento — omitido = **todos** (`ar`, `re`, `cp`, `ch`, `ip`, `bk`); `[]` = nenhum filtro de subtipo |
 | `sortBy` | string? | `date`, `citedBy`, `relevance` |
 | `sortDirection` | string? | `newest`/`oldest` (date) ou `highest`/`lowest` (citedBy) |
 | `categoryIds` | string[]? | IDs de `categories.json` para enriquecer a query |
@@ -407,8 +511,8 @@ Referência rápida dos field codes usados nas queries:
 ### Executar testes
 
 ```bash
-npm test                          # todos os testes
-npm run test:coverage             # testes + relatório de cobertura
+make test                          # todos os testes
+make coverage                      # testes + relatório de cobertura
 node --test test/core/keyword-extract.test.mjs   # arquivo específico
 ```
 
@@ -446,73 +550,101 @@ Os testes usam o runner nativo `node:test` + `node:assert/strict`. Não há depe
 
 ---
 
-## Deploy / release
+## Troubleshooting
 
-O projeto não tem backend — é um toolkit CLI local. "Deploy" significa criar um pacote versionado para distribuição ou arquivamento.
+- `failures` no `extract`: indica falha técnica da tentativa (timeout, bloqueio de página, sessão expirada, navegação interrompida).
+- `failures` no `extract`: não significa automaticamente que o artigo não tem keywords.
+- `no-keywords` no `extract`: após retries, não foi possível obter keywords utilizáveis no artigo — normalmente ausência/indisponibilidade de `Author Keywords` e `Indexed Keywords` aproveitáveis.
+- erro de sessão/autenticação: rode `make login` novamente para renovar `artifacts/session/auth-cookies.json`.
+- `sortby` sem arquivo de coleta: rode `make collect` antes para gerar `artifacts/output/collect/links-*.json`.
 
-### Como criar um release
+### Validação local
 
-```bash
-# 1. Garantir que tudo passa
-npm run check        # build (typecheck) + testes
+Comandos validados localmente neste projeto:
 
-# 2. Bump de versão no package.json
-npm version patch    # 0.1.0 → 0.1.1 (bug fix)
-npm version minor    # 0.1.0 → 0.2.0 (nova feature)
-npm version major    # 0.1.0 → 1.0.0 (breaking change)
+- `make test`
+- `make sortby ARGS="--preset relevance"`
+- `make clean`
+- `make rank`
 
-# 3. Criar o pacote comprimido (exclui node_modules e artifacts)
-npm pack             # gera scopkey-toolkit-0.x.x.tgz
+Observação: `collect` e `collect-extract` dependem de acesso externo ao Scopus/CAFe, então o comportamento final pode variar conforme sessão, credenciais e disponibilidade da página.
 
-# 4. (Opcional) Tag no git
-git tag v0.x.x
-git push origin v0.x.x
-```
+---
 
-### O que o `npm pack` inclui
+## Hooks (Husky)
 
-Inclui tudo que não está no `.gitignore` / `.npmignore`. Para controlar o conteúdo, o `package.json` pode ter um campo `files`:
+Este projeto usa hooks em `.husky/` (não usa `.githooks`).
 
-```json
-"files": [
-  "src/",
-  "config/",
-  "scripts/",
-  ".env.EXAMPLE",
-  "README.md",
-  "doc.md",
-  "LICENSE.md"
-]
-```
+- `pre-commit` (`.husky/pre-commit`): roda `node scripts/pre-commit.mjs`
+- `pre-push` (`.husky/pre-push`): roda `node scripts/pre-push.mjs`
+- `scripts/pre-commit.mjs`: valida sintaxe dos `.mjs` staged e executa `make test`
+- `scripts/pre-push.mjs`: executa `make test` e `make coverage`
 
-### Instalar a partir do `.tgz`
+Para testar localmente:
 
 ```bash
-npm install ./scopkey-toolkit-0.x.x.tgz
+./.husky/pre-commit
+./.husky/pre-push
 ```
 
-### CI / GitHub Actions
+---
 
-O workflow em `.github/` pode ser configurado para rodar `npm run check` em cada push e criar o release automaticamente ao fazer push de uma tag `v*`:
+## Contribuindo
 
-```yaml
-on:
-  push:
-    tags: ['v*']
-jobs:
-  release:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with: { node-version: '22' }
-      - run: npm ci
-      - run: npm run check
-      - run: npm pack
-      - uses: softprops/action-gh-release@v2
-        with:
-          files: '*.tgz'
+### Fork e PR
+
+```bash
+# 1. Fork no GitHub → clone do seu fork
+git clone https://github.com/<seu-usuario>/scopkey-toolkit.git
+cd scopkey-toolkit
+
+# 2. Instalar dependências
+make setup
+
+# 3. Criar branch
+git checkout -b feat/minha-mudanca
+
+# 4. Fazer as alterações e garantir que tudo passa
+make test
+
+# 5. Commit e push
+git add .
+git commit -m "feat: descrição da mudança"
+git push origin feat/minha-mudanca
+
+# 6. Abrir PR no GitHub
 ```
+
+O CI roda `make test` automaticamente em todo PR. O template de PR em `.github/PULL_REQUEST_TEMPLATE.md` guia o que preencher.
+
+---
+
+## Screenshots
+
+**Login (`make login`)**
+Exemplo mostrando a autenticação via CAFe e a persistência da sessão em `artifacts/session/auth-cookies.json`.
+![Terminal - login](assets/screenshots/terminal-01.png)
+
+**Collect (`make collect`)**
+Exemplo mostrando a coleta dos links/artigos a partir das buscas configuradas no `config/searches.json`.
+![Terminal - collect](assets/screenshots/terminal-02.png)
+
+O fluxo de `extract` não aparece nesses dois prints.
+
+**Download (`make download`)**
+Exemplo mostrando o download incremental de PDFs via IEEE Xplore autenticado pelo proxy CAPES. O script retoma de onde parou, pulando artigos já baixados com sucesso.
+![Terminal - download](assets/screenshots/downloaded.png)
+
+O fluxo navega automaticamente pelo Scopus → IEEE Xplore → `stamp.jsp` → `getPDF.jsp`, reutilizando a sessão do browser para contornar o bloqueio de bot do proxy CloudFront.
+
+**Extract (`make extract`)**
+Exemplo mostrando a extração dos keywords a partir das buscas configuradas no `config/searches.json`.
+![Terminal - extract](assets/screenshots/out_extract_carbon.png)
+
+Interpretação rápida do resultado do `extract`:
+- `results`: keywords encontradas com sucesso.
+- `failures`: erro técnico na extração daquela tentativa (não significa necessariamente ausência de keywords).
+- `no-keywords`: após retries, o artigo foi classificado sem keywords relevantes no registro.
 
 ---
 

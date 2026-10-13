@@ -1,11 +1,12 @@
 import fs from "node:fs";
 import path from "node:path";
-import { chromium } from "playwright";
+import { launchBrowser } from "../shared/browser-launch.mjs";
 import { PATHS, SETTINGS, translateIfNeeded } from "../shared/config.mjs";
 import { readJson, appendJsonl, readAllDoneIds, readAllDoneIdsFromAllSessions, countFailures, findLatestLinksFiles, sleep } from "../shared/utils.mjs";
 import { log } from "../shared/logger.mjs";
 import { extractFromDOM, extractFromText } from "../core/keyword-extract.mjs";
 import { extractAbstractFromDOM } from "../core/abstract-extract.mjs";
+import { extractMetricsFromDOM } from "../core/metrics-extract.mjs";
 import { acceptCookies, ensureSession, checkSession } from "../browser/session.mjs";
 
 const MAX_RETRIES = 2;
@@ -39,18 +40,19 @@ export async function extractKeywordsForArticle(page, url) {
     .catch(() => sleep(1000));
 
   const abstract = await page.evaluate(extractAbstractFromDOM).catch(() => null);
+  const metrics = await page.evaluate(extractMetricsFromDOM).catch(() => null);
 
   const domResult = await page.evaluate(extractFromDOM);
-  if (domResult?.keywords.length > 0) return { keywords: domResult.keywords, source: domResult.source, groups: domResult.groups, abstract };
+  if (domResult?.keywords.length > 0) return { keywords: domResult.keywords, source: domResult.source, groups: domResult.groups, abstract, metrics };
 
   const bodyText = await page.locator("body").innerText();
   const textKws = extractFromText(bodyText);
-  if (textKws.length > 0) return { keywords: textKws, source: "text-fallback", abstract };
+  if (textKws.length > 0) return { keywords: textKws, source: "text-fallback", abstract, metrics };
 
   const hasKeywordSection = await page.evaluate(() =>
     !!document.querySelector('[data-testid*="keyword" i], [id*="keyword" i]')
   );
-  return { keywords: [], source: hasKeywordSection ? "empty-section" : "no-section", abstract };
+  return { keywords: [], source: hasKeywordSection ? "empty-section" : "no-section", abstract, metrics };
 }
 
 async function translateKeywords(keywords) {
@@ -63,7 +65,7 @@ async function translateKeywords(keywords) {
   return translated;
 }
 
-async function saveArticleResult(item, translatedKeywords, originalKeywords, source, groups, abstract) {
+async function saveArticleResult(item, translatedKeywords, originalKeywords, source, groups, abstract, metrics) {
   appendJsonl(PATHS.results, {
     id: item.id,
     title: item.title,
@@ -71,6 +73,7 @@ async function saveArticleResult(item, translatedKeywords, originalKeywords, sou
     keywords: translatedKeywords,
     originalKeywords: originalKeywords.some((k, i) => k !== translatedKeywords[i]) ? originalKeywords : undefined,
     groups: groups?.length ? groups : undefined,
+    metrics: metrics ?? undefined,
     source,
     sourceLink: item.url,
   });
@@ -97,6 +100,32 @@ async function saveArticleError(item, err) {
   });
 }
 
+export async function processArticle(workerPage, item, { failCounts = new Map(), doneIds = new Set() } = {}) {
+  const { keywords, source, groups, abstract, metrics } = await extractKeywordsForArticle(workerPage, item.url);
+  const translatedKeywords = await translateKeywords(keywords);
+
+  if (translatedKeywords.length === 0) {
+    const attempts = (failCounts.get(String(item.id)) || 0) + 1;
+    failCounts.set(String(item.id), attempts);
+
+    if (attempts >= MAX_RETRIES) {
+      log.warn(`Sem keywords após ${attempts} tentativas — marcando como concluído (${source})`);
+      appendJsonl(PATHS.noKeywords, { id: item.id, title: item.title, source, sourceLink: item.url });
+      doneIds.add(String(item.id));
+    } else {
+      log.empty(source);
+    }
+
+    await saveArticleFailure(item, source, attempts);
+    return { status: "empty" };
+  }
+
+  log.success(translatedKeywords);
+  await saveArticleResult(item, translatedKeywords, keywords, source, groups, abstract, metrics);
+  doneIds.add(String(item.id));
+  return { status: "ok" };
+}
+
 export async function runExtractor(page, items, { doneIds, concurrency = DEFAULT_CONCURRENCY } = {}) {
   const done = doneIds ?? readAllDoneIds(PATHS.resultsDir, PATHS.noKeywordsDir);
   const failCounts = countFailures(PATHS.failuresDir);
@@ -117,29 +146,9 @@ export async function runExtractor(page, items, { doneIds, concurrency = DEFAULT
   async function processItem(workerPage, item) {
     log.article(cursor, pending.length, item.title, item.url);
     try {
-      const { keywords, source, groups, abstract } = await extractKeywordsForArticle(workerPage, item.url);
-      const translatedKeywords = await translateKeywords(keywords);
-
-      if (translatedKeywords.length === 0) {
-        const attempts = (failCounts.get(String(item.id)) || 0) + 1;
-        failCounts.set(String(item.id), attempts);
-
-        if (attempts >= MAX_RETRIES) {
-          log.warn(`Sem keywords após ${attempts} tentativas — marcando como concluído (${source})`);
-          appendJsonl(PATHS.noKeywords, { id: item.id, title: item.title, source, sourceLink: item.url });
-          done.add(String(item.id));
-        } else {
-          log.empty(source);
-        }
-
-        await saveArticleFailure(item, source, attempts);
-        failCount++;
-      } else {
-        log.success(translatedKeywords);
-        await saveArticleResult(item, translatedKeywords, keywords, source, groups, abstract);
-        done.add(String(item.id));
-        successCount++;
-      }
+      const { status } = await processArticle(workerPage, item, { failCounts, doneIds: done });
+      if (status === "ok") successCount++;
+      else failCount++;
     } catch (err) {
       log.error(err.message);
       await saveArticleError(item, err);
@@ -208,7 +217,7 @@ async function main() {
   const collectFiles = findLatestLinksFiles(allCollectDir, Infinity);
 
   if (collectFiles.length === 0) {
-    log.error(`Nenhum arquivo links-*.json encontrado em ${allCollectDir}. Execute \`npm run collect\` primeiro.`);
+    log.error(`Nenhum arquivo links-*.json encontrado em ${allCollectDir}. Execute \`make collect\` primeiro.`);
     process.exit(1);
   }
 
@@ -217,7 +226,7 @@ async function main() {
   const allItems = deduplicateByField(linksData.flatMap(s => (Array.isArray(s) ? s : [s]).flatMap(r => r.publications ?? [])), "id");
 
   if (allItems.length === 0) {
-    log.error("Nenhum artigo encontrado. Execute `npm run collect` primeiro.");
+    log.error("Nenhum artigo encontrado. Execute `make collect` primeiro.");
     process.exit(1);
   }
 
@@ -230,13 +239,7 @@ async function main() {
 
   releaseStaleLock(PATHS.userDataDir);
 
-  const browser = await chromium.launchPersistentContext(PATHS.userDataDir, {
-    headless: SETTINGS.headless,
-    slowMo: SETTINGS.slowMo,
-    viewport: null,
-    executablePath: SETTINGS.executablePath,
-    args: ["--no-sandbox", "--disable-setuid-sandbox", "--start-maximized"],
-  });
+  const browser = await launchBrowser(PATHS.userDataDir);
 
   try {
     const page = await browser.newPage();

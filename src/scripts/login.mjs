@@ -1,4 +1,4 @@
-import { chromium } from "playwright";
+import { launchBrowser } from "../shared/browser-launch.mjs";
 import { PATHS, SETTINGS } from "../shared/config.mjs";
 import { sleep } from "../shared/utils.mjs";
 import { logger } from "../shared/logger.mjs";
@@ -10,21 +10,13 @@ async function main() {
 
   if (!SETTINGS.cafeAccessUrl) throw new Error("CAFE_ACCESS_URL não definido no ambiente.");
 
-  logger.step(`Chromium headless=${SETTINGS.headless}`);
-
-  const launchOptions = {
-    headless: SETTINGS.headless,
-    slowMo: SETTINGS.slowMo,
-    viewport: null,
-    args: ["--no-sandbox", "--disable-setuid-sandbox", "--start-maximized"],
-  };
+  logger.step(`Browser headless=${SETTINGS.headless}`);
 
   if (SETTINGS.executablePath) {
     logger.step(`Executable: ${SETTINGS.executablePath}`);
-    launchOptions.executablePath = SETTINGS.executablePath;
   }
 
-  const context = await chromium.launchPersistentContext(PATHS.userDataDir, launchOptions);
+  const context = await launchBrowser(PATHS.userDataDir);
   const page = await context.newPage();
   logger.ok("Browser launched");
 
@@ -47,7 +39,7 @@ async function main() {
 
   logger.header("Login Complete");
   logger.done(`Session saved to ${PATHS.userDataDir}.`);
-  logger.step("npm run collect  ·  npm run extract");
+  logger.step("make collect  ·  make extract");
   logger.divider();
 
   await saveSessionCookies(context);

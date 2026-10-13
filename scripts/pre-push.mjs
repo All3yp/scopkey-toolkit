@@ -10,9 +10,9 @@ function run(cmd) {
 }
 
 console.log("Running tests...");
-run("npm test");
+run("make test");
 
 console.log("Running coverage...");
-run("npm run test:coverage");
+run("make coverage");
 
 console.log("✅ OK — pushing");

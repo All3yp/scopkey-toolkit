@@ -13,6 +13,44 @@ export function readJson(file, fallback = []) {
   }
 }
 
+function parseJsonlObjects(text) {
+  const items = [];
+  for (const line of text.split("\n")) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    try {
+      const obj = JSON.parse(trimmed);
+      if (Array.isArray(obj)) items.push(...obj);
+      else if (obj && typeof obj === "object") items.push(obj);
+    } catch {
+    }
+  }
+  return items;
+}
+
+export function readSearches(file) {
+  let raw;
+  try {
+    raw = fs.readFileSync(file, "utf8");
+  } catch {
+    return [];
+  }
+
+  const trimmed = raw.trim();
+  if (!trimmed) return [];
+
+  if (trimmed.startsWith("[") || trimmed.startsWith("{")) {
+    try {
+      const parsed = JSON.parse(trimmed);
+      if (Array.isArray(parsed)) return parsed;
+      if (parsed && typeof parsed === "object") return [parsed];
+    } catch {
+    }
+  }
+
+  return parseJsonlObjects(trimmed);
+}
+
 export function writeJson(file, data) {
   ensureDir(path.dirname(file));
   fs.writeFileSync(file, JSON.stringify(data, null, 2), "utf8");
@@ -25,6 +63,16 @@ export function appendJsonl(file, obj) {
 
 export function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+export function parseSearchesArg(argv = process.argv.slice(2)) {
+  for (let i = 0; i < argv.length; i++) {
+    const arg = argv[i];
+    if (arg === "--searches" || arg === "--input") return argv[i + 1] ?? null;
+    const inline = arg.match(/^--(?:searches|input)=(.*)$/);
+    if (inline) return inline[1];
+  }
+  return null;
 }
 
 

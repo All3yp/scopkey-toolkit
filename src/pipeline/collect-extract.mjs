@@ -1,27 +1,18 @@
-import { chromium } from "playwright";
-import { PATHS, SETTINGS, translateIfNeeded } from "../shared/config.mjs";
-import { appendJsonl, readAllDoneIds, sleep } from "../shared/utils.mjs";
+import { launchBrowser } from "../shared/browser-launch.mjs";
+import { PATHS, SETTINGS } from "../shared/config.mjs";
+import { appendJsonl, readAllDoneIds, countFailures, parseSearchesArg, sleep } from "../shared/utils.mjs";
 import { log } from "../shared/logger.mjs";
 import { fmt } from "../shared/formatter.mjs";
 import { ensureSession } from "../browser/session.mjs";
 import { runCollector } from "./collect-links.mjs";
-import { extractKeywordsForArticle } from "./extract-keywords.mjs";
+import { processArticle } from "./extract-keywords.mjs";
 
 const queue = [];
 let collectingDone = false;
 
-async function translateKeywords(keywords) {
-  const translated = [];
-  for (const kw of keywords) {
-    const result = await translateIfNeeded(kw);
-    if (result !== kw) log.step(`Translated: "${kw}" → "${result}"`);
-    translated.push(result);
-  }
-  return translated;
-}
-
 async function extractorLoop(page, doneIds) {
   let extracted = 0;
+  const failCounts = countFailures(PATHS.failuresDir);
   while (true) {
     const item = queue.shift() ?? null;
     if (!item) {
@@ -29,30 +20,16 @@ async function extractorLoop(page, doneIds) {
       await sleep(500);
       continue;
     }
-    const id = String(item.id);
-    if (doneIds.has(id)) continue;
+    if (doneIds.has(String(item.id))) continue;
 
     log.article(extracted + 1, "?", item.title, item.url);
     try {
-      const { keywords, source } = await extractKeywordsForArticle(page, item.url);
-      const translatedKeywords = await translateKeywords(keywords);
-
-      if (translatedKeywords.length === 0) {
-        log.empty(source);
-      } else {
-        log.success(translatedKeywords);
-        appendJsonl(PATHS.results, {
-          id, title: item.title, keywords: translatedKeywords,
-          originalKeywords: keywords.some((k, i) => k !== translatedKeywords[i]) ? keywords : undefined,
-          source, sourceLink: item.url,
-        });
-        doneIds.add(id);
-        extracted++;
-      }
+      const { status } = await processArticle(page, item, { failCounts, doneIds });
+      if (status === "ok") extracted++;
     } catch (err) {
       log.error(err.message);
       appendJsonl(PATHS.failures, {
-        id, title: item.title, url: item.url,
+        id: String(item.id), title: item.title, url: item.url,
         error: String(err), timestamp: new Date().toISOString(),
       });
     }
@@ -64,11 +41,10 @@ async function extractorLoop(page, doneIds) {
 async function main() {
   log.header("Collect + Extract (parallel)");
 
-  const context = await chromium.launchPersistentContext(PATHS.userDataDir, {
-    headless: SETTINGS.headless, slowMo: SETTINGS.slowMo, viewport: null,
-    executablePath: SETTINGS.executablePath,
-    args: ["--no-sandbox", "--disable-setuid-sandbox", "--start-maximized"],
-  });
+  const searchesFile = parseSearchesArg() ?? PATHS.searches;
+  if (searchesFile !== PATHS.searches) log.info(`Arquivo de buscas customizado: ${searchesFile}`);
+
+  const context = await launchBrowser(PATHS.userDataDir);
 
   try {
     const page1 = await context.newPage();
@@ -78,7 +54,7 @@ async function main() {
 
     const doneIds = readAllDoneIds(PATHS.resultsDir, PATHS.noKeywordsDir);
 
-    const collectorPromise = runCollector(page1, { onBatch: pubs => queue.push(...pubs) })
+    const collectorPromise = runCollector(page1, { onBatch: pubs => queue.push(...pubs), searchesFile })
       .catch(err => { log.error(`Collector error: ${err.message}`); return []; })
       .then(results => { collectingDone = true; return results; });
 

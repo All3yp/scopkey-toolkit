@@ -52,7 +52,7 @@ function getTranslate(translateModule = googleTranslate) {
   return translate;
 }
 
-export function resolveChromiumExecutablePath(
+export function resolveBrowserExecutablePath(
   env,
   { platform = process.platform, exec = execSync, exists = fs.existsSync } = {}
 ) {
@@ -64,6 +64,8 @@ export function resolveChromiumExecutablePath(
         "/Applications/Chromium.app/Contents/MacOS/Chromium",
         "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
         "/Applications/Google Chrome Canary.app/Contents/MacOS/Google Chrome Canary",
+        "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
+        "/Applications/Firefox.app/Contents/MacOS/firefox",
       ]
     : platform === "win32"
       ? [
@@ -71,8 +73,11 @@ export function resolveChromiumExecutablePath(
           "C:\\Program Files (x86)\\Chromium\\Application\\chrome.exe",
           "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
           "C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe",
+          "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe",
+          "C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe",
+          "C:\\Program Files\\Mozilla Firefox\\firefox.exe",
         ]
-    : [
+      : [
           "/usr/bin/chromium",
           "/usr/bin/chromium-browser",
           "/snap/bin/chromium",
@@ -80,19 +85,21 @@ export function resolveChromiumExecutablePath(
           "/usr/bin/google-chrome-stable",
           "/usr/bin/chrome",
           "/opt/google/chrome/chrome",
+          "/usr/bin/microsoft-edge",
+          "/usr/bin/microsoft-edge-stable",
+          "/opt/microsoft/msedge/microsoft-edge",
+          "/usr/bin/firefox",
+          "/usr/lib/firefox/firefox",
+          "/snap/bin/firefox",
         ];
 
   for (const candidate of commonPaths) {
-    if (candidate.includes("\\")) {
-      if (exists(candidate)) return candidate;
-      continue;
-    }
     if (exists(candidate)) return candidate;
   }
 
   const probes = platform === "win32"
-    ? ["chromium", "chrome", "chrome.exe"]
-    : ["chromium", "chromium-browser", "google-chrome", "google-chrome-stable", "chrome"];
+    ? ["chromium", "chrome", "chrome.exe", "msedge", "firefox"]
+    : ["chromium", "chromium-browser", "google-chrome", "google-chrome-stable", "chrome", "microsoft-edge", "microsoft-edge-stable", "firefox"];
 
   for (const probe of probes) {
     try {
@@ -151,7 +158,7 @@ export function buildRuntimeConfig({
 
   const SETTINGS = {
     headless: false,
-    executablePath: resolveChromiumExecutablePath(env, { platform, exec, exists }),
+    executablePath: resolveBrowserExecutablePath(env, { platform, exec, exists }),
     slowMo: Number(env.SLOW_MO || 50),
     navigationTimeoutMs: 120000,
     delayBetweenArticlesMs: Number(env.DELAY_MS || 800),

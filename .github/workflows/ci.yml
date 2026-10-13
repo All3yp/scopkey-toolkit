@@ -33,11 +33,11 @@ jobs:
         run: npm install --ignore-scripts
 
       - name: Run unit tests
-        run: npm test
+        run: make test
         env:
           NODE_ENV: test
 
       - name: Run coverage
-        run: npm run test:coverage
+        run: make coverage
         env:
           NODE_ENV: test

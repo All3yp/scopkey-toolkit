@@ -61,14 +61,14 @@ function rankKeywords(articles) {
 function main() {
   const linksFile = findLatestLinks(PATHS.collectDir);
   if (!linksFile) {
-    log.error("Nenhum links-*.json encontrado. Execute `npm run collect` primeiro.");
+    log.error("Nenhum links-*.json encontrado. Execute `make collect` primeiro.");
     process.exit(1);
   }
 
   const citedByMap = buildCitedByMap(readJson(linksFile, []));
   const results = readAllResultsFromDir(PATHS.resultsDir);
   if (results.length === 0) {
-    log.error("Nenhum resultado de extração encontrado. Execute `npm run extract` primeiro.");
+    log.error("Nenhum resultado de extração encontrado. Execute `make extract` primeiro.");
     process.exit(1);
   }
 

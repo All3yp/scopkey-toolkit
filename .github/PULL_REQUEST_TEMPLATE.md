@@ -12,7 +12,7 @@
 
 ## Checklist
 
-- [ ] `npm test` passa localmente (158+ testes, 0 falhas)
+- [ ] `make test` passa localmente (158+ testes, 0 falhas)
 - [ ] Novos comportamentos têm testes cobrindo os casos relevantes
 - [ ] Nenhum arquivo de `artifacts/` foi commitado
 - [ ] `.env` não foi commitado

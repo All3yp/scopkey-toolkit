@@ -38,7 +38,7 @@ export function resolveSortOptions(args) {
   const sortBy = String(args.sortBy ?? args.sortby ?? "").trim().toLowerCase();
   const dir = String(args.sortDirection ?? args.sortdirection ?? "").trim().toLowerCase();
 
-  if (!sortBy) throw new Error("Informe --preset ou --sortBy.\nExemplos:\n  npm run sortby -- --preset cited-highest\n  npm run sortby -- --sortBy date --sortDirection oldest");
+  if (!sortBy) throw new Error("Informe --preset ou --sortBy.\nExemplos:\n  make sortby ARGS=\"--preset cited-highest\"\n  make sortby ARGS=\"--sortBy date --sortDirection oldest\"");
   if (sortBy === "relevance") return { sortBy: "relevance", label: "relevance" };
 
   if (["date", "year"].includes(sortBy)) {
@@ -84,7 +84,7 @@ export function runSortResults({
 
   const linksFile = findLatest(paths.collectDir) ?? findLatest(paths.outputDir);
   if (!linksFile) {
-    logger.error("Nenhum arquivo links-*.json encontrado. Execute `npm run collect` primeiro.");
+    logger.error("Nenhum arquivo links-*.json encontrado. Execute `make collect` primeiro.");
     exit(1);
     return;
   }

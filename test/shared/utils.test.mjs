@@ -7,7 +7,7 @@ import path from "node:path";
 import {
   ensureDir, readJson, writeJson, appendJsonl,
   readJsonlIds, findLatestLinks, readAllDoneIds, countFailures,
-  readAllDoneIdsFromAllSessions, findLatestLinksFiles,
+  readAllDoneIdsFromAllSessions, findLatestLinksFiles, parseSearchesArg, readSearches,
 } from "../../src/shared/utils.mjs";
 
 function tmp(prefix = "utils-test-") {
@@ -304,5 +304,96 @@ test("findLatestLinksFiles: respects limit parameter", () => {
     }
     const files = findLatestLinksFiles(root, 3);
     assert.equal(files.length, 3);
+  } finally { cleanup(root); }
+});
+
+// ── parseSearchesArg ──────────────────────────────────────────────────────────
+
+test("parseSearchesArg: returns null when no searches/input flag is present", () => {
+  assert.equal(parseSearchesArg([]), null);
+  assert.equal(parseSearchesArg(["--concurrency", "3"]), null);
+});
+
+test("parseSearchesArg: reads --searches with a separate argument", () => {
+  assert.equal(parseSearchesArg(["--searches", "config/minhas.json"]), "config/minhas.json");
+});
+
+test("parseSearchesArg: reads --input alias", () => {
+  assert.equal(parseSearchesArg(["--input", "config/outro.json"]), "config/outro.json");
+});
+
+test("parseSearchesArg: supports inline --flag=value form", () => {
+  assert.equal(parseSearchesArg(["--searches=config/a.json"]), "config/a.json");
+  assert.equal(parseSearchesArg(["--input=config/b.json"]), "config/b.json");
+});
+
+test("parseSearchesArg: ignores other flags and finds the searches flag anywhere", () => {
+  assert.equal(
+    parseSearchesArg(["--concurrency", "3", "--searches", "config/x.json", "--verbose"]),
+    "config/x.json"
+  );
+});
+
+test("parseSearchesArg: returns null when flag has no following value", () => {
+  assert.equal(parseSearchesArg(["--searches"]), null);
+});
+
+// ── readSearches ──────────────────────────────────────────────────────────────
+
+test("readSearches: parses a JSON array file", () => {
+  const root = tmp();
+  try {
+    const f = path.join(root, "searches.json");
+    writeJson(f, [{ id: "a" }, { id: "b" }]);
+    assert.deepEqual(readSearches(f), [{ id: "a" }, { id: "b" }]);
+  } finally { cleanup(root); }
+});
+
+test("readSearches: parses a JSONL file (one search per line)", () => {
+  const root = tmp();
+  try {
+    const f = path.join(root, "searches.jsonl");
+    fs.writeFileSync(f, '{"id":"a"}\n{"id":"b"}\n', "utf8");
+    assert.deepEqual(readSearches(f), [{ id: "a" }, { id: "b" }]);
+  } finally { cleanup(root); }
+});
+
+test("readSearches: JSONL ignores blank and malformed lines", () => {
+  const root = tmp();
+  try {
+    const f = path.join(root, "searches.jsonl");
+    fs.writeFileSync(f, '\n{"id":"a"}\n   \nnot-json\n{"id":"b"}\n', "utf8");
+    assert.deepEqual(readSearches(f), [{ id: "a" }, { id: "b" }]);
+  } finally { cleanup(root); }
+});
+
+test("readSearches: JSONL flattens array lines", () => {
+  const root = tmp();
+  try {
+    const f = path.join(root, "searches.jsonl");
+    fs.writeFileSync(f, '[{"id":"a"},{"id":"b"}]\n{"id":"c"}\n', "utf8");
+    assert.deepEqual(readSearches(f), [{ id: "a" }, { id: "b" }, { id: "c" }]);
+  } finally { cleanup(root); }
+});
+
+test("readSearches: accepts a single JSON object", () => {
+  const root = tmp();
+  try {
+    const f = path.join(root, "one.json");
+    fs.writeFileSync(f, '{ "id": "solo" }', "utf8");
+    assert.deepEqual(readSearches(f), [{ id: "solo" }]);
+  } finally { cleanup(root); }
+});
+
+test("readSearches: returns empty array for missing file", () => {
+  assert.deepEqual(readSearches(path.join(os.tmpdir(), "nope-" + Date.now() + ".jsonl")), []);
+});
+
+test("readSearches: returns empty array for empty/whitespace file", () => {
+  const root = tmp();
+  try {
+    const f = path.join(root, "empty.jsonl");
+    fs.writeFileSync(f, "   \n\n", "utf8");
+    assert.deepEqual(readSearches(f), []);
   } finally { cleanup(root); }
 });

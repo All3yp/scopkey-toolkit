@@ -117,8 +117,16 @@ test("buildScopusUrl: omits year params when not provided", () => {
   assert.equal(u.searchParams.has("yearTo"),   false);
 });
 
-test("buildScopusUrl: emits no cluster params when docTypes is empty (default)", () => {
+test("buildScopusUrl: defaults docTypes to all Scopus subtypes when omitted", () => {
   const clusters = new URL(buildScopusUrl({ query: "q" })).searchParams.getAll("cluster");
+  assert.deepEqual(clusters, [
+    'scosubtype,"ar",t', 'scosubtype,"re",t', 'scosubtype,"cp",t',
+    'scosubtype,"ch",t', 'scosubtype,"ip",t', 'scosubtype,"bk",t',
+  ]);
+});
+
+test("buildScopusUrl: emits no docType clusters when docTypes is explicitly empty", () => {
+  const clusters = new URL(buildScopusUrl({ query: "q", docTypes: [] })).searchParams.getAll("cluster");
   assert.deepEqual(clusters, []);
 });
 

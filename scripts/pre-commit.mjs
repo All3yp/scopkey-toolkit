@@ -25,6 +25,6 @@ if (mjsFiles.length === 0) {
 }
 
 run(`node --check ${mjsFiles.join(" ")}`, "syntax check");
-run("npm run test", "test");
+run("make test", "test");
 
 console.log("\n✅ pre-commit ok");

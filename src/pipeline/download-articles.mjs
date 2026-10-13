@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import "dotenv/config";
-import { chromium } from "playwright";
+import { launchBrowser } from "../shared/browser-launch.mjs";
 import { PATHS, SETTINGS } from "../shared/config.mjs";
 import { readJson, appendJsonl, sleep, ensureDir } from "../shared/utils.mjs";
 import { log } from "../shared/logger.mjs";
@@ -502,19 +502,28 @@ export async function runArticleDownloader(context, page, items, { doneIds, conc
   return { successCount, failCount };
 }
 
+function resolveSourceFile(argv = process.argv.slice(2)) {
+  const idx = argv.indexOf("--file");
+  if (idx !== -1 && argv[idx + 1]) return path.resolve(argv[idx + 1]);
+  const eqIdx = argv.findIndex(arg => arg.startsWith("--file="));
+  if (eqIdx !== -1) return path.resolve(argv[eqIdx].slice("--file=".length));
+  return DEDUPED_FILE;
+}
+
 async function main() {
   log.header("Download Articles (Incremental)");
 
   releaseStaleLock(PATHS.userDataDir);
 
-  const items = readFromDeduped(DEDUPED_FILE);
+  const sourceFile = resolveSourceFile();
+  const items = readFromDeduped(sourceFile);
   if (items.length === 0) {
-    log.error(`Nenhum artigo encontrado em ${DEDUPED_FILE}. Execute npm run dedupe primeiro.`);
+    log.error(`Nenhum artigo encontrado em ${sourceFile}.${sourceFile === DEDUPED_FILE ? " Execute make dedupe primeiro." : ""}`);
     process.exit(1);
   }
 
-  log.info(`Lendo: ${path.basename(DEDUPED_FILE)}`);
-  log.info(`Artigos deduplicados: ${items.length}`);
+  log.info(`Lendo: ${path.basename(sourceFile)}`);
+  log.info(`Artigos: ${items.length}`);
 
   ensureDir(DOWNLOADS_DIR);
   ensureDir(path.join(DOWNLOADS_DIR, "logs"));
@@ -530,13 +539,7 @@ async function main() {
     return;
   }
 
-  const context = await chromium.launchPersistentContext(PATHS.userDataDir, {
-    headless: SETTINGS.headless,
-    slowMo: SETTINGS.slowMo,
-    viewport: null,
-    executablePath: SETTINGS.executablePath,
-    args: ["--no-sandbox", "--disable-setuid-sandbox", "--start-maximized"],
-  });
+  const context = await launchBrowser(PATHS.userDataDir);
 
   try {
     const page = await context.newPage();

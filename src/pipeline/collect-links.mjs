@@ -1,7 +1,7 @@
-import { chromium } from "playwright";
+import { launchBrowser } from "../shared/browser-launch.mjs";
 import { PATHS, SETTINGS } from "../shared/config.mjs";
 import path from "node:path";
-import { readJson, writeJson, readAllDoneIds, sleep, findLatestLinksFiles } from "../shared/utils.mjs";
+import { readJson, readSearches, writeJson, readAllDoneIds, sleep, findLatestLinksFiles, parseSearchesArg } from "../shared/utils.mjs";
 import { buildScopusUrl, resolveScopusSort } from "../core/build-url.mjs";
 import { log } from "../shared/logger.mjs";
 import { fmt } from "../shared/formatter.mjs";
@@ -212,9 +212,9 @@ function queryKey(s) {
   ].join("|");
 }
 
-export async function runCollector(page, { onBatch, existingResults = [], excludeIds } = {}) {
-  const searches = readJson(PATHS.searches, []);
-  if (!searches.length) throw new Error("Arquivo data/input/searches.json não encontrado ou vazio.");
+export async function runCollector(page, { onBatch, existingResults = [], excludeIds, searchesFile = PATHS.searches } = {}) {
+  const searches = readSearches(searchesFile);
+  if (!searches.length) throw new Error(`Arquivo de buscas não encontrado ou vazio: ${searchesFile}`);
   const knownIds = excludeIds ?? readAllDoneIds(PATHS.resultsDir, PATHS.noKeywordsDir);
 
   const groups = new Map();
@@ -310,6 +310,9 @@ export async function runCollector(page, { onBatch, existingResults = [], exclud
 }
 
 async function main() {
+  const searchesFile = parseSearchesArg() ?? PATHS.searches;
+  if (searchesFile !== PATHS.searches) log.info(`Arquivo de buscas customizado: ${searchesFile}`);
+
   const existingFiles = findLatestLinksFiles(PATHS.collectDir, Infinity);
   const existingResults = existingFiles.flatMap(f => {
     const data = readJson(f, null);
@@ -319,17 +322,13 @@ async function main() {
     log.info(`Resumindo — ${existingResults.length} buscas já coletadas: ${existingResults.map(r => r.id).join(", ")}`);
   }
 
-  const context = await chromium.launchPersistentContext(PATHS.userDataDir, {
-    headless: SETTINGS.headless, slowMo: SETTINGS.slowMo, viewport: null,
-    executablePath: SETTINGS.executablePath,
-    args: ["--no-sandbox", "--disable-setuid-sandbox", "--start-maximized"],
-  });
+  const context = await launchBrowser(PATHS.userDataDir);
 
   try {
     const page = await context.newPage();
     await ensureSession(page);
     await sleep(3000);
-    const results = await runCollector(page, { existingResults });
+    const results = await runCollector(page, { existingResults, searchesFile });
     fmt.finalSummary(results, PATHS.collectDir);
   } finally {
     await context.close();

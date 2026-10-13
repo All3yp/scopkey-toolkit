@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import {
   buildRuntimeConfig,
   resolveSecret,
-  resolveChromiumExecutablePath,
+  resolveBrowserExecutablePath,
 } from "../../src/shared/config.mjs";
 
 test("resolveSecret: returns raw value on non-PASS input", () => {
@@ -49,9 +49,9 @@ test("resolveSecret: bypasses PASS command on win32", () => {
   assert.equal(out, "PASS:any/path");
 });
 
-test("resolveChromiumExecutablePath: prefers explicit env and known system chromium", () => {
+test("resolveBrowserExecutablePath: prefers explicit env and known system chromium", () => {
   assert.equal(
-    resolveChromiumExecutablePath({ CHROMIUM_EXECUTABLE_PATH: "/tmp/chromium" }, {
+    resolveBrowserExecutablePath({ CHROMIUM_EXECUTABLE_PATH: "/tmp/chromium" }, {
       platform: "linux",
       exists() {
         return false;
@@ -62,8 +62,7 @@ test("resolveChromiumExecutablePath: prefers explicit env and known system chrom
     }),
     "/tmp/chromium"
   );
-
-  const detected = resolveChromiumExecutablePath({}, {
+  const detected = resolveBrowserExecutablePath({}, {
     platform: "linux",
     exists(candidate) {
       return candidate === "/usr/bin/chromium";
@@ -76,6 +75,50 @@ test("resolveChromiumExecutablePath: prefers explicit env and known system chrom
   assert.equal(detected, "/usr/bin/chromium");
 });
 
+test("resolveBrowserExecutablePath: falls back to edge then firefox via which", () => {
+  assert.equal(
+    resolveBrowserExecutablePath({}, {
+      platform: "linux",
+      exists: candidate => candidate === "/usr/bin/microsoft-edge",
+      exec(cmd) {
+        assert.ok(cmd.startsWith("command -v "));
+        const probe = cmd.slice("command -v ".length);
+        if (probe === "microsoft-edge") return "/usr/bin/microsoft-edge\n";
+        if (probe === "firefox") return "/usr/bin/firefox\n";
+        throw new Error(`no ${probe}`);
+      },
+    }),
+    "/usr/bin/microsoft-edge"
+  );
+
+  assert.equal(
+    resolveBrowserExecutablePath({}, {
+      platform: "linux",
+      exists: candidate => candidate === "/usr/bin/firefox",
+      exec(cmd) {
+        const probe = cmd.slice("command -v ".length);
+        if (probe === "firefox") return "/usr/bin/firefox\n";
+        throw new Error(`no ${probe}`);
+      },
+    }),
+    "/usr/bin/firefox"
+  );
+});
+
+test("resolveBrowserExecutablePath: prefers common firefox path over probes", () => {
+  assert.equal(
+    resolveBrowserExecutablePath({}, {
+      platform: "linux",
+      exists(candidate) {
+        return candidate === "/usr/bin/firefox";
+      },
+      exec() {
+        throw new Error("should not be called when common path exists");
+      },
+    }),
+    "/usr/bin/firefox"
+  );
+});
 test("buildRuntimeConfig: detectLang fallback when detector is disabled", async () => {
   const runtime = buildRuntimeConfig({
     env: {
