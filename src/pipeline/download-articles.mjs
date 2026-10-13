@@ -303,7 +303,7 @@ async function clickPDFAndDownload(publisherPage, downloadsDir, filename) {
   return { success: false, error: "download-failed" };
 }
 
-async function downloadOpenAlexFallback(article, downloadsDir, filename, { doi } = {}) {
+async function downloadViaOpenAlex(article, downloadsDir, filename, { doi } = {}) {
   log.step(`OpenAlex: buscando por título "${article.title}"...`);
   const work = await findWorkByTitle({ title: article.title, doi, year: article.year });
   if (!work) {
@@ -323,22 +323,31 @@ async function downloadOpenAlexFallback(article, downloadsDir, filename, { doi }
 }
 
 async function downloadArticlePDF(context, page, article, downloadsDir) {
+  const safeTitle = article.title.replace(/[^a-zA-Z0-9]/g, '_').substring(0, 50);
+  const filename = `${article.id}_${safeTitle}.pdf`;
+
+  // OpenAlex primeiro: PDF de acesso aberto, sem depender da sessão CAPES.
+  const openalex = await downloadViaOpenAlex(article, downloadsDir, filename, { doi: article.doi }).catch(err => {
+    log.warn(`OpenAlex falhou (${err.message}) — tentando via CAPES/Scopus...`);
+    return { success: false, error: `openalex-error:${err.message}` };
+  });
+  if (openalex.success) return openalex;
+
+  // OpenAlex não resolveu (sem match ou sem PDF aberto): tenta Scopus → publisher via CAPES.
+  log.step(`OpenAlex não resolveu (${openalex.error}) — tentando via CAPES/Scopus...`);
+
   await page.goto(article.url, { waitUntil: "domcontentloaded", timeout: SETTINGS.navigationTimeoutMs });
   await acceptCookies(page);
   await sleep(2000);
 
   const doi = await extractDOIFromPage(page);
-  const safeTitle = article.title.replace(/[^a-zA-Z0-9]/g, '_').substring(0, 50);
-  const filename = `${article.id}_${safeTitle}.pdf`;
 
   try {
     const nav = await clickViewPDFAndGetPage(context, page);
 
     if (!nav) {
-      log.warn("Sem acesso ao publisher — tentando OpenAlex...");
-      const fallback = await downloadOpenAlexFallback(article, downloadsDir, filename, { doi });
-      if (fallback.success) return { ...fallback, doi };
-      return { success: false, error: "no-publisher-access", doi, openalex: fallback };
+      log.warn("Sem acesso ao publisher");
+      return { success: false, error: "no-publisher-access", doi, openalex };
     }
 
     const publisherPage = nav.page;
@@ -381,10 +390,7 @@ async function downloadArticlePDF(context, page, article, downloadsDir) {
         } else {
           log.warn(`IEEE URL sem ID de artigo: ${publisherUrl}`);
           await publisherPage.close().catch(() => {});
-          log.warn("Tentando OpenAlex...");
-          const fallback = await downloadOpenAlexFallback(article, downloadsDir, filename, { doi });
-          if (fallback.success) return { ...fallback, doi, publisherUrl };
-          return { success: false, error: 'ieee-no-article-id', doi, publisherUrl, openalex: fallback };
+          return { success: false, error: 'ieee-no-article-id', doi, publisherUrl, openalex };
 
         }
       }
@@ -401,10 +407,8 @@ async function downloadArticlePDF(context, page, article, downloadsDir) {
       const ieeeUrl = `${IEEE_BASE_URL}${ieeeId}`;
       const result = await downloadIEEEPDF(context, ieeeUrl, downloadsDir, filename);
       if (!result.success) {
-        log.warn("IEEE falhou — tentando OpenAlex...");
-        const fallback = await downloadOpenAlexFallback(article, downloadsDir, filename, { doi });
-        if (fallback.success) return { ...fallback, doi, publisherUrl };
-        return { ...result, doi, publisherUrl, openalex: fallback };
+        log.warn("IEEE falhou");
+        return { ...result, doi, publisherUrl, openalex };
       }
       return { ...result, doi, publisherUrl };
 
@@ -413,17 +417,13 @@ async function downloadArticlePDF(context, page, article, downloadsDir) {
     const result = await clickPDFAndDownload(publisherPage, downloadsDir, filename);
     await publisherPage.close().catch(() => {});
     if (!result.success) {
-      log.warn("Publisher falhou — tentando OpenAlex...");
-      const fallback = await downloadOpenAlexFallback(article, downloadsDir, filename, { doi });
-      if (fallback.success) return { ...fallback, doi, publisherUrl };
-      return { ...result, doi, publisherUrl, openalex: fallback };
+      log.warn("Publisher falhou");
+      return { ...result, doi, publisherUrl, openalex };
     }
     return { ...result, doi, publisherUrl };
   } catch (err) {
-    log.warn(`Erro no download (${err.message}) — tentando OpenAlex...`);
-    const fallback = await downloadOpenAlexFallback(article, downloadsDir, filename, { doi }).catch(() => ({ success: false, error: "openalex-fallback-error" }));
-    if (fallback.success) return { ...fallback, doi };
-    return { success: false, error: err.message, doi, openalex: fallback };
+    log.warn(`Erro no download (${err.message})`);
+    return { success: false, error: err.message, doi, openalex };
   }
 }
 
@@ -612,7 +612,7 @@ async function main() {
     });
 
     log.header("Download Complete");
-    log.done(`${successCount} PDFs baixados (Scopus: ${scopusCount}, OpenAlex: ${openalexCount})`);
+    log.done(`${successCount} PDFs baixados (Scopus/CAPES: ${scopusCount}, OpenAlex: ${openalexCount})`);
     if (failCount > 0) log.warn(`${failCount} falhas`);
     log.step(`Registros salvos em: ${DOWNLOADS_LOG}`);
     log.step(`PDFs em: ${DOWNLOADS_DIR}`);

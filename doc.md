@@ -374,24 +374,23 @@ artifacts/
 - `make rank` → `artifacts/output/extract/ranked/`
 
 **Fonte customizada no download:** `make download /caminho/lista.jsonl` — aceita qualquer JSONL com `id` e `sourceLink`/`url` por linha (mesmo formato de `articles-deduped.jsonl`). Sem arquivo, usa `artifacts/output/extract/deduped/articles-deduped.jsonl`.
-**Fallback OpenAlex (`make download`):** quando o download pelo caminho Scopus → publisher (IEEE Xplore etc.) falha — sem acesso ao publisher, sem ID IEEE, PDF indisponível ou erro de navegação — o script busca o artigo no [OpenAlex](https://openalex.org) por título (relevância, filtro de ano quando disponível) e baixa o PDF de acesso aberto (`best_oa_location.pdf_url`). O log de download (`logs/downloads-<ts>.jsonl`) registra `source: "openalex"` + `openalexId` nos artigos resolvidos por esse caminho (marcados como baixados — não são repetidos na próxima execução). Sem PDF de acesso aberto, o artigo fica como falha (`openalex-no-oa-pdf`).
+**OpenAlex primeiro (`make download`):** cada artigo é buscado no [OpenAlex](https://openalex.org) por título (relevância, filtro de ano quando disponível) e, com PDF de acesso aberto (`best_oa_location.pdf_url`), baixado direto — sem depender da sessão CAPES. O log de download (`logs/downloads-<ts>.jsonl`) registra `source: "openalex"` + `openalexId` nos artigos resolvidos por esse caminho (marcados como baixados — não são repetidos na próxima execução). Sem match, sem PDF de acesso aberto ou erro na API, o script tenta o caminho Scopus → publisher (IEEE Xplore etc.) via CAPES/CAFe. Sem PDF de acesso aberto nem acesso ao publisher, o artigo fica como falha (ex.: `openalex-no-oa-pdf`, `no-publisher-access`).
 
-**Logs de pendência:** cada execução de `make download` escreve `logs/pendentes-<ts>.jsonl` com os artigos ainda não baixados (`id`, `title`, `url`) — consulte esse arquivo para ver o que falta. O resumo final mostra a contagem por fonte: `PDFs baixados (Scopus: N, OpenAlex: M)`.
+**Logs de pendência:** cada execução de `make download` escreve `logs/pendentes-<ts>.jsonl` com os artigos ainda não baixados (`id`, `title`, `url`) — consulte esse arquivo para ver o que falta. O resumo final mostra a contagem por fonte: `PDFs baixados (Scopus/CAPES: N, OpenAlex: M)`.
 
 ### Download manual: renomear e marcar como concluído
 
 Quando um artigo não é obtido automaticamente (sem acesso ao publisher e sem PDF de acesso aberto no OpenAlex), baixe o PDF manualmente e padronize o nome com `scripts/rename-download.mjs`:
 
 ```sh
-make rename PDF=<arquivo.pdf> NAME="<id>_<título>"
+make rename <arquivo.pdf> "<id>_<título>"
 # equivalente: node scripts/rename-download.mjs <arquivo.pdf> "<id>_<título>"
 ```
 
-O alvo `make rename` chama `scripts/rename-download.mjs`, que resolve o caminho, separa o `id` (antes do primeiro `_`) do `título`, aplica a mesma sanitização do `make download` (`[^a-zA-Z0-9]` → `_`, cortado em 50 caracteres) e renomeia o arquivo no mesmo diretório. Se o destino já existir, ele aborta em vez de sobrescrever. Ex.:
+O alvo `make rename` recebe dois argumentos posicionais — o PDF e o `"<id>_<título>"` — e chama `scripts/rename-download.mjs`, que resolve o caminho (aceita caminho relativo, absoluto ou `~`, expandido pelo próprio script), separa o `id` (antes do primeiro `_`) do `título`, aplica a mesma sanitização do `make download` (`[^a-zA-Z0-9]` → `_`, cortado em 50 caracteres) e renomeia o arquivo no mesmo diretório. Se o destino já existir, ele aborta em vez de sobrescrever. Como o nome tem espaços, passe-o entre aspas:
 
 ```sh
-make rename PDF=~/Downloads/artigo.pdf \
-  NAME="85098064539_VerifyandRevive: Secure Detection and Recovery of Compromised Low-end Embedded Devices"
+make rename ~/Downloads/artigo.pdf "85098064539_VerifyandRevive: Secure Detection and Recovery of Compromised Low-end Embedded Devices"
 # → 85098064539_VerifyandRevive__Secure_Detection_and_Recovery_of_.pdf
 ```
 
@@ -428,7 +427,7 @@ CHROMIUM_EXECUTABLE_PATH=      # opcional: caminho do browser (Chromium/Chrome/E
 
 IEEE_BASE_URL=                 # URL base do IEEE Xplore via proxy CAPES
 
-OPENALEX_API_URL=              # fallback OpenAlex (padrão: https://api.openalex.org)
+OPENALEX_API_URL=              # OpenAlex (tentativa principal; padrão: https://api.openalex.org)
 OPENALEX_MAILTO=               # e-mail para politesse de rate-limit do OpenAlex (opcional)
 ```
 

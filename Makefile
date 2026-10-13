@@ -16,6 +16,13 @@ SEARCHES_ARG := --searches $(INPUT)
 FILE_ARG := --file $(INPUT)
 endif
 
+# rename: argumentos posicionais — o 1º é o PDF, o 2º (entre aspas) é "id_titulo".
+#   make rename ~/artigo.pdf "85098064539_Titulo do artigo"
+# Também aceita a forma explícita PDF=... NAME=... como fallback.
+RENAME_ARGS := $(filter-out $(TARGETS),$(MAKECMDGOALS))
+RENAME_PDF  := $(or $(word 1,$(RENAME_ARGS)),$(PDF))
+RENAME_NAME := $(or $(wordlist 2,$(words $(RENAME_ARGS)),$(RENAME_ARGS)),$(NAME))
+
 .DEFAULT_GOAL := help
 
 .PHONY: $(TARGETS)
@@ -32,7 +39,7 @@ help:
 	@echo "  make dedupe           consolida extracts → JSONL + JSON + CSV"
 	@echo "  make categorize       categoriza artigos por grupos de pesquisa"
 	@echo "  make download         baixa PDFs (opcional: make download caminho.jsonl)"
-	@echo "  make rename           renomeia PDF manual: make rename PDF=arq.pdf NAME=\"id_titulo\""
+	@echo "  make rename           renomeia PDF manual: make rename arq.pdf \"id_titulo\""
 	@echo "  make clean            deduplica + traduz keywords"
 	@echo "  make rank             ranking de keywords por citações"
 	@echo "  make sortby           ordena os resultados localmente"
@@ -74,7 +81,8 @@ download:
 	$(NODE) src/pipeline/download-articles.mjs $(FILE_ARG) $(ARGS)
 
 rename:
-	$(NODE) scripts/rename-download.mjs "$(PDF)" "$(NAME)"
+	@[ -n "$(RENAME_PDF)" ] && [ -n "$(RENAME_NAME)" ] || { echo 'uso: make rename <arquivo.pdf> "id_titulo"'; exit 1; }
+	$(NODE) scripts/rename-download.mjs "$(RENAME_PDF)" "$(RENAME_NAME)"
 
 clean:
 	$(NODE) src/pipeline/clean-keywords.mjs $(ARGS)

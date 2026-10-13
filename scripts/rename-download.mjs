@@ -1,8 +1,17 @@
 #!/usr/bin/env node
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 
 const TITLE_MAX_LEN = 50;
+
+/** Expands a leading `~` (the Makefile recipe quotes the value, so the shell won't do it). */
+function expandHome(p) {
+  const s = String(p ?? "");
+  if (s === "~") return os.homedir();
+  if (s.startsWith("~/")) return path.join(os.homedir(), s.slice(2));
+  return s;
+}
 
 /**
  * Builds the download filename from an "<id>_<title>" string.
@@ -27,7 +36,7 @@ function main(argv) {
     process.exit(1);
   }
 
-  const src = path.resolve(pdfPath);
+  const src = path.resolve(expandHome(pdfPath));
   if (!fs.existsSync(src)) {
     console.error(`Arquivo não encontrado: ${src}`);
     process.exit(1);
