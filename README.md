@@ -41,6 +41,7 @@ make download         # baixa PDFs dos artigos deduplicados
 make clean            # deduplicação + tradução automática de keywords
 make rank             # ranking de keywords por citações
 make sortby           # ordena resultados localmente
+make preview          # prévia dos logs (sem baixar nada)
 make test             # roda a suíte de testes
 ```
 

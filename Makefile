@@ -5,7 +5,7 @@ NPM  ?= npm
 ARGS ?=
 
 # Alvos conhecidos — usado para extrair um arquivo de buscas passado por posição
-TARGETS := help setup login collect extract collect-extract abstracts dedupe categorize download rename clean rank sortby test coverage build check
+TARGETS := help setup login collect extract collect-extract abstracts dedupe categorize download rename clean rank sortby preview test coverage build check
 
 # Arquivo opcional (json ou jsonl), passado por posição:
 #   make collect config/minhas-buscas.jsonl
@@ -43,6 +43,7 @@ help:
 	@echo "  make clean            deduplica + traduz keywords"
 	@echo "  make rank             ranking de keywords por citações"
 	@echo "  make sortby           ordena os resultados localmente"
+	@echo "  make preview          prévia dos logs (sem baixar nada)"
 	@echo "  make test             executa a suíte de testes"
 	@echo "  make coverage         testes + relatório de cobertura"
 	@echo "  make build            valida a sintaxe dos scripts"
@@ -92,6 +93,9 @@ rank:
 
 sortby:
 	$(NODE) src/pipeline/sort-results.mjs $(ARGS)
+
+preview:
+	$(NODE) scripts/preview-logs.mjs
 
 test:
 	$(NODE) --test test/**/*.test.mjs

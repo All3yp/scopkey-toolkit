@@ -1,39 +1,52 @@
-const c = {
+function colorEnabled() {
+  if (process.env.NO_COLOR) return false;
+  const force = process.env.FORCE_COLOR;
+  if (force !== undefined) return force !== "0" && force !== "false";
+  return Boolean(process.stdout && process.stdout.isTTY);
+}
+
+const palette = {
   reset: "\x1b[0m",
   bold: "\x1b[1m",
   dim: "\x1b[2m",
-  cyan: "\x1b[36m",
-  green: "\x1b[32m",
-  yellow: "\x1b[33m",
-  red: "\x1b[31m",
-  white: "\x1b[37m",
-  blue: "\x1b[34m",
-  magenta: "\x1b[35m",
+  italic: "\x1b[3m",
+  gray: "\x1b[90m",
+  red: "\x1b[91m",
+  green: "\x1b[92m",
+  yellow: "\x1b[93m",
+  blue: "\x1b[94m",
+  magenta: "\x1b[95m",
+  cyan: "\x1b[96m",
+  white: "\x1b[97m",
   orange: "\x1b[38;5;208m",
 };
 
-const COLS = 50;
-const line = (char = "─") => c.dim + char.repeat(COLS) + c.reset;
+const c = colorEnabled()
+  ? palette
+  : Object.fromEntries(Object.keys(palette).map(k => [k, ""]));
+
+const WIDTH = Math.max(48, Math.min(process.stdout?.columns || 60, 72));
+const rule = (char = "─", color = c.dim) => `${color}${char.repeat(WIDTH)}${c.reset}`;
 
 export const logger = {
   divider() {
-    console.log(line());
+    console.log(rule());
   },
 
   header(title) {
     console.log();
     console.log(`${c.bold}${c.cyan}  ▶ ${title}${c.reset}`);
-    console.log(line());
+    console.log(rule("─", c.cyan));
   },
 
   step(msg) {
-    console.log(`${c.dim}  → ${msg}${c.reset}`);
+    console.log(`${c.gray}  → ${msg}${c.reset}`);
   },
 
   article(index, total, title, url) {
-    console.log(line());
-    console.log(`${c.cyan}${c.bold}[${index}/${total}]${c.reset} ${c.white}${title}${c.reset}`);
-    console.log(`${c.dim}        ${url}${c.reset}`);
+    console.log(rule());
+    console.log(`${c.cyan}${c.bold}  [${index}/${total}]${c.reset} ${c.white}${title}${c.reset}`);
+    if (url) console.log(`${c.gray}        ${url}${c.reset}`);
   },
 
   success(keywords, source) {
@@ -45,7 +58,7 @@ export const logger = {
     const msg = msgs[source] || "keywords";
     console.log(`${c.green}  ✓ ${keywords.length} ${msg}${c.reset}`);
     for (const kw of keywords) {
-      console.log(`${c.dim}      ·${c.reset} ${kw}`);
+      console.log(`${c.gray}      ·${c.reset} ${kw}`);
     }
   },
 
@@ -75,15 +88,15 @@ export const logger = {
   },
 
   ok(msg) {
-    console.log(`${c.green}    ✓ ${c.dim}${msg}${c.reset}`);
+    console.log(`${c.green}    ✓ ${msg}${c.reset}`);
   },
 
   summary(success, fail, resultsPath) {
-    console.log(line("━"));
-    console.log(`${c.bold}Concluído${c.reset}`);
-    console.log(`  ${c.green}✓ Sucesso:${c.reset}  ${success}`);
-    if (fail > 0) console.log(`  ${c.red}✗ Falhas:${c.reset}   ${fail}`);
-    console.log(`  ${c.dim}Resultados: ${resultsPath}${c.reset}`);
+    console.log(rule("━", c.dim));
+    console.log(`  ${c.bold}Concluído${c.reset}`);
+    console.log(`  ${c.green}✓ Sucesso:${c.reset}  ${c.bold}${success}${c.reset}`);
+    if (fail > 0) console.log(`  ${c.red}✗ Falhas:${c.reset}   ${c.bold}${fail}${c.reset}`);
+    console.log(`  ${c.gray}Resultados:${c.reset} ${resultsPath}`);
   },
 };
 

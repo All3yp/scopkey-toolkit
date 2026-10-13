@@ -578,6 +578,17 @@ test/
 
 Os testes usam o runner nativo `node:test` + `node:assert/strict`. Não há dependências externas de teste.
 
+### Prévia dos logs (sem executar o pipeline)
+
+Para conferir a formatação do logger sem baixar nada (nem abrir o browser, nem tocar a rede), use o script de prévia — ele só imprime exemplos com dados fictícios:
+
+```bash
+make preview                        # prévia completa (download + extract + estados)
+node scripts/preview-logs.mjs download   # cenário específico: download | extract | misc
+```
+
+Para focar em um cenário, passe-o por posição direto no script (`download`, `extract` ou `misc`). Não use `make preview download`: o Make trataria `download` como o alvo real e dispararia um download de verdade.
+
 ---
 
 ## Troubleshooting
