@@ -5,7 +5,7 @@ NPM  ?= npm
 ARGS ?=
 
 # Alvos conhecidos — usado para extrair um arquivo de buscas passado por posição
-TARGETS := help setup login collect extract collect-extract abstracts dedupe categorize download clean rank sortby test coverage build check
+TARGETS := help setup login collect extract collect-extract abstracts dedupe categorize download rename clean rank sortby test coverage build check
 
 # Arquivo opcional (json ou jsonl), passado por posição:
 #   make collect config/minhas-buscas.jsonl
@@ -32,6 +32,7 @@ help:
 	@echo "  make dedupe           consolida extracts → JSONL + JSON + CSV"
 	@echo "  make categorize       categoriza artigos por grupos de pesquisa"
 	@echo "  make download         baixa PDFs (opcional: make download caminho.jsonl)"
+	@echo "  make rename           renomeia PDF manual: make rename PDF=arq.pdf NAME=\"id_titulo\""
 	@echo "  make clean            deduplica + traduz keywords"
 	@echo "  make rank             ranking de keywords por citações"
 	@echo "  make sortby           ordena os resultados localmente"
@@ -71,6 +72,9 @@ categorize:
 
 download:
 	$(NODE) src/pipeline/download-articles.mjs $(FILE_ARG) $(ARGS)
+
+rename:
+	$(NODE) scripts/rename-download.mjs "$(PDF)" "$(NAME)"
 
 clean:
 	$(NODE) src/pipeline/clean-keywords.mjs $(ARGS)

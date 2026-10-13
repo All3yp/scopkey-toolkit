@@ -6,6 +6,7 @@ import { PATHS, SETTINGS } from "../shared/config.mjs";
 import { readJson, appendJsonl, sleep, ensureDir } from "../shared/utils.mjs";
 import { log } from "../shared/logger.mjs";
 import { acceptCookies, ensureSession, checkSession } from "../browser/session.mjs";
+import { findWorkByTitle, openAlexPdfUrl, downloadOpenAccessPdf, sanitizeFilename } from "../core/openalex.mjs";
 
 const MAX_RETRIES = 2;
 const DEFAULT_CONCURRENCY = 1;
@@ -78,22 +79,31 @@ async function clickViewPDFAndGetPage(context, page) {
   if (popup) {
     await popup.waitForLoadState('domcontentloaded', { timeout: 20000 }).catch(() => {});
 
+    // The publisher URL is captured while the popup is mid-navigation, because some
+    // publishers (IEEE via xplorestaging) land on /document/<id> and then client-side
+    // redirect away from the id. Reading url() later would lose it.
     let waited = 0;
-    let currentUrl = await popup.evaluate(() => document.URL);
+    let stableMs = 0;
+    let currentUrl = popup.url();
 
     while (!/\/document\/\d+/.test(currentUrl) && waited < 30000) {
       await sleep(500);
       waited += 500;
-      currentUrl = await popup.evaluate(() => document.URL);
+      const next = popup.url();
+      if (/\/document\/\d+/.test(next)) { currentUrl = next; break; }
+      if (next === currentUrl && /^https?:/i.test(next)) stableMs += 500;
+      else stableMs = 0;
+      currentUrl = next;
+      if (stableMs >= 5000) break;
     }
 
     if (!/\/document\/\d+/.test(currentUrl)) {
-      log.warn(`Timeout aguardando ID. URL: ${currentUrl}`);
+      const reason = waited >= 30000 ? "Timeout" : "URL do publisher sem ID de artigo";
+      log.warn(`${reason}. URL: ${currentUrl}`);
     } else {
       log.step(`Aguardado ${waited}ms para ID`);
     }
-    // log.step(`Nova aba: ${currentUrl}`);
-    return popup;
+    return { page: popup, url: currentUrl };
   }
 
   await sleep(3000);
@@ -101,7 +111,7 @@ async function clickViewPDFAndGetPage(context, page) {
   if (pages.length > 1) {
     const latest = pages[pages.length - 1];
     log.step(`Aba detectada: ${latest.url()}`);
-    return latest;
+    return { page: latest, url: latest.url() };
   }
 
   log.warn("Nenhuma nova aba detectada após clique");
@@ -293,6 +303,25 @@ async function clickPDFAndDownload(publisherPage, downloadsDir, filename) {
   return { success: false, error: "download-failed" };
 }
 
+async function downloadOpenAlexFallback(article, downloadsDir, filename, { doi } = {}) {
+  log.step(`OpenAlex: buscando por título "${article.title}"...`);
+  const work = await findWorkByTitle({ title: article.title, doi, year: article.year });
+  if (!work) {
+    log.warn("OpenAlex: nenhum artigo compatível encontrado");
+    return { success: false, error: "openalex-no-match" };
+  }
+  const oa = openAlexPdfUrl(work);
+  if (!oa) {
+    log.warn(`OpenAlex: artigo encontrado (${work.id}) mas sem PDF de acesso aberto`);
+    return { success: false, error: "openalex-no-oa-pdf", openalexId: work.id };
+  }
+  log.step(`OpenAlex: PDF aberto (${oa.isOa ? "OA" : "fechado?"}): ${oa.pdfUrl}`);
+  const filepath = path.join(downloadsDir, filename);
+  const result = await downloadOpenAccessPdf(oa.pdfUrl, filepath);
+  log.step(`OpenAlex: PDF salvo em ${filepath} (${result.bytes} bytes)`);
+  return { success: true, filename, filepath, openalexId: work.id, source: "openalex" };
+}
+
 async function downloadArticlePDF(context, page, article, downloadsDir) {
   await page.goto(article.url, { waitUntil: "domcontentloaded", timeout: SETTINGS.navigationTimeoutMs });
   await acceptCookies(page);
@@ -303,16 +332,20 @@ async function downloadArticlePDF(context, page, article, downloadsDir) {
   const filename = `${article.id}_${safeTitle}.pdf`;
 
   try {
-    const publisherPage = await clickViewPDFAndGetPage(context, page);
+    const nav = await clickViewPDFAndGetPage(context, page);
 
-    if (!publisherPage) {
-      return { success: false, error: "no-publisher-access", doi };
+    if (!nav) {
+      log.warn("Sem acesso ao publisher — tentando OpenAlex...");
+      const fallback = await downloadOpenAlexFallback(article, downloadsDir, filename, { doi });
+      if (fallback.success) return { ...fallback, doi };
+      return { success: false, error: "no-publisher-access", doi, openalex: fallback };
     }
 
+    const publisherPage = nav.page;
     await acceptCookies(publisherPage).catch(() => {});
     await sleep(1500);
 
-    const publisherUrl = publisherPage.url();
+    const publisherUrl = nav.url || publisherPage.url();
     log.step(`Publisher URL: ${publisherUrl}`);
 
     if (isIEEEUrl(publisherUrl)) {
@@ -348,7 +381,11 @@ async function downloadArticlePDF(context, page, article, downloadsDir) {
         } else {
           log.warn(`IEEE URL sem ID de artigo: ${publisherUrl}`);
           await publisherPage.close().catch(() => {});
-          return { success: false, error: 'ieee-no-article-id', doi, publisherUrl };
+          log.warn("Tentando OpenAlex...");
+          const fallback = await downloadOpenAlexFallback(article, downloadsDir, filename, { doi });
+          if (fallback.success) return { ...fallback, doi, publisherUrl };
+          return { success: false, error: 'ieee-no-article-id', doi, publisherUrl, openalex: fallback };
+
         }
       }
       log.step(`IEEE article ID detectado: ${ieeeId}`);
@@ -363,14 +400,30 @@ async function downloadArticlePDF(context, page, article, downloadsDir) {
 
       const ieeeUrl = `${IEEE_BASE_URL}${ieeeId}`;
       const result = await downloadIEEEPDF(context, ieeeUrl, downloadsDir, filename);
+      if (!result.success) {
+        log.warn("IEEE falhou — tentando OpenAlex...");
+        const fallback = await downloadOpenAlexFallback(article, downloadsDir, filename, { doi });
+        if (fallback.success) return { ...fallback, doi, publisherUrl };
+        return { ...result, doi, publisherUrl, openalex: fallback };
+      }
       return { ...result, doi, publisherUrl };
+
     }
 
     const result = await clickPDFAndDownload(publisherPage, downloadsDir, filename);
     await publisherPage.close().catch(() => {});
+    if (!result.success) {
+      log.warn("Publisher falhou — tentando OpenAlex...");
+      const fallback = await downloadOpenAlexFallback(article, downloadsDir, filename, { doi });
+      if (fallback.success) return { ...fallback, doi, publisherUrl };
+      return { ...result, doi, publisherUrl, openalex: fallback };
+    }
     return { ...result, doi, publisherUrl };
   } catch (err) {
-    return { success: false, error: err.message, doi };
+    log.warn(`Erro no download (${err.message}) — tentando OpenAlex...`);
+    const fallback = await downloadOpenAlexFallback(article, downloadsDir, filename, { doi }).catch(() => ({ success: false, error: "openalex-fallback-error" }));
+    if (fallback.success) return { ...fallback, doi };
+    return { success: false, error: err.message, doi, openalex: fallback };
   }
 }
 
@@ -437,6 +490,8 @@ export async function runArticleDownloader(context, page, items, { doneIds, conc
 
   let successCount = 0;
   let failCount = 0;
+  let openalexCount = 0;
+  let scopusCount = 0;
   let cursor = 0;
 
   function nextItem() {
@@ -453,10 +508,12 @@ export async function runArticleDownloader(context, page, items, { doneIds, conc
       const result = await downloadArticlePDF(context, workerPage, item, downloadsDir);
 
       if (result.success) {
-        log.success(`Downloaded: ${result.filename}`);
+        log.ok(`Downloaded: ${result.filename}${result.source === "openalex" ? " (via OpenAlex)" : ""}`);
         await saveDownloadResult(item, result);
         done.add(String(item.id));
         successCount++;
+        if (result.source === "openalex") openalexCount++;
+        else scopusCount++;
       } else {
         log.warn(`Failed: ${result.error}`);
         await saveDownloadResult(item, result);
@@ -482,7 +539,7 @@ export async function runArticleDownloader(context, page, items, { doneIds, conc
       await processItem(page, item);
       await sleep(SETTINGS.delayBetweenArticlesMs * 2);
     }
-    return { successCount, failCount };
+    return { successCount, failCount, openalexCount, scopusCount };
   }
 
   log.info(`⚡ Download paralelo: ${workers} abas`);
@@ -499,7 +556,7 @@ export async function runArticleDownloader(context, page, items, { doneIds, conc
 
   for (let w = 1; w < pages.length; w++) await pages[w].close().catch(() => {});
 
-  return { successCount, failCount };
+  return { successCount, failCount, openalexCount, scopusCount };
 }
 
 function resolveSourceFile(argv = process.argv.slice(2)) {
@@ -533,6 +590,9 @@ async function main() {
 
   const pending = items.filter(item => !doneIds.has(String(item.id)));
   log.info(`Pendentes: ${pending.length}`);
+  const PENDINGS_LOG = path.join(DOWNLOADS_DIR, "logs", `pendentes-${PATHS.sessionTs}.jsonl`);
+  for (const item of pending) appendJsonl(PENDINGS_LOG, { id: item.id, title: item.title, url: item.url });
+  if (pending.length) log.step(`Lista de pendentes: ${PENDINGS_LOG}`);
 
   if (pending.length === 0) {
     log.done("Todos os artigos já foram processados.");
@@ -545,17 +605,19 @@ async function main() {
     const page = await context.newPage();
     await ensureSession(page);
 
-    const { successCount, failCount } = await runArticleDownloader(context, page, items, {
+    const { successCount, failCount, openalexCount, scopusCount } = await runArticleDownloader(context, page, items, {
       doneIds,
       concurrency: DEFAULT_CONCURRENCY,
       downloadsDir: DOWNLOADS_DIR,
     });
 
     log.header("Download Complete");
-    log.done(`${successCount} PDFs baixados`);
+    log.done(`${successCount} PDFs baixados (Scopus: ${scopusCount}, OpenAlex: ${openalexCount})`);
     if (failCount > 0) log.warn(`${failCount} falhas`);
     log.step(`Registros salvos em: ${DOWNLOADS_LOG}`);
     log.step(`PDFs em: ${DOWNLOADS_DIR}`);
+    log.step(`Pendentes (não baixados): ${PENDINGS_LOG}`);
+
     log.divider();
   } finally {
     await context.close();

@@ -36,3 +36,4 @@ config/olds/
 .commandcode/
 .husky/_*
 .husky/*.lock
+.vscode/

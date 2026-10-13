@@ -6,7 +6,7 @@ Espero que este projeto te seja útil!, passei uns dias e madrugadas me dedicand
 
 - fluxo completo: `collect → extract → dedupe → categorize` (+ `clean`, `rank`, `sortby`)
 - extração de Author/Indexed keywords, abstract e métricas por artigo
-- download automático de PDFs via IEEE Xplore (CAPES/CAFe)
+- download automático de PDFs via IEEE Xplore (CAPES/CAFe), com fallback para OpenAlex (acesso aberto) quando o caminho Scopus/IEEE falha
 - saídas versionadas em JSONL, JSON e CSV
 
 > Documentação completa (arquitetura, módulos, configuração e formatos de dados): **[doc.md](doc.md)**.

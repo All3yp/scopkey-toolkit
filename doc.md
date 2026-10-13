@@ -374,6 +374,34 @@ artifacts/
 - `make rank` → `artifacts/output/extract/ranked/`
 
 **Fonte customizada no download:** `make download /caminho/lista.jsonl` — aceita qualquer JSONL com `id` e `sourceLink`/`url` por linha (mesmo formato de `articles-deduped.jsonl`). Sem arquivo, usa `artifacts/output/extract/deduped/articles-deduped.jsonl`.
+**Fallback OpenAlex (`make download`):** quando o download pelo caminho Scopus → publisher (IEEE Xplore etc.) falha — sem acesso ao publisher, sem ID IEEE, PDF indisponível ou erro de navegação — o script busca o artigo no [OpenAlex](https://openalex.org) por título (relevância, filtro de ano quando disponível) e baixa o PDF de acesso aberto (`best_oa_location.pdf_url`). O log de download (`logs/downloads-<ts>.jsonl`) registra `source: "openalex"` + `openalexId` nos artigos resolvidos por esse caminho (marcados como baixados — não são repetidos na próxima execução). Sem PDF de acesso aberto, o artigo fica como falha (`openalex-no-oa-pdf`).
+
+**Logs de pendência:** cada execução de `make download` escreve `logs/pendentes-<ts>.jsonl` com os artigos ainda não baixados (`id`, `title`, `url`) — consulte esse arquivo para ver o que falta. O resumo final mostra a contagem por fonte: `PDFs baixados (Scopus: N, OpenAlex: M)`.
+
+### Download manual: renomear e marcar como concluído
+
+Quando um artigo não é obtido automaticamente (sem acesso ao publisher e sem PDF de acesso aberto no OpenAlex), baixe o PDF manualmente e padronize o nome com `scripts/rename-download.mjs`:
+
+```sh
+make rename PDF=<arquivo.pdf> NAME="<id>_<título>"
+# equivalente: node scripts/rename-download.mjs <arquivo.pdf> "<id>_<título>"
+```
+
+O alvo `make rename` chama `scripts/rename-download.mjs`, que resolve o caminho, separa o `id` (antes do primeiro `_`) do `título`, aplica a mesma sanitização do `make download` (`[^a-zA-Z0-9]` → `_`, cortado em 50 caracteres) e renomeia o arquivo no mesmo diretório. Se o destino já existir, ele aborta em vez de sobrescrever. Ex.:
+
+```sh
+make rename PDF=~/Downloads/artigo.pdf \
+  NAME="85098064539_VerifyandRevive: Secure Detection and Recovery of Compromised Low-end Embedded Devices"
+# → 85098064539_VerifyandRevive__Secure_Detection_and_Recovery_of_.pdf
+```
+
+Para o `make download` não tentar baixar de novo, registre o artigo como concluído. A checagem de pendências lê todos os `downloads-*.jsonl` em `artifacts/output/extract/downloads/logs/` e considera concluído qualquer linha com `id` + `success: true` (o nome do arquivo não importa):
+
+```sh
+echo '{"id":"85098064539","success":true}' \
+  >> artifacts/output/extract/downloads/logs/downloads-manual.jsonl
+```
+
 
 ---
 
@@ -399,6 +427,9 @@ CAFE_STEP_DELAY_MS=1200
 CHROMIUM_EXECUTABLE_PATH=      # opcional: caminho do browser (Chromium/Chrome/Edge/Firefox)
 
 IEEE_BASE_URL=                 # URL base do IEEE Xplore via proxy CAPES
+
+OPENALEX_API_URL=              # fallback OpenAlex (padrão: https://api.openalex.org)
+OPENALEX_MAILTO=               # e-mail para politesse de rate-limit do OpenAlex (opcional)
 ```
 
 ---
